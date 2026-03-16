@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+
+# Local settings & config
+.claude/
+.vscode/mcp.json
+node_modules/

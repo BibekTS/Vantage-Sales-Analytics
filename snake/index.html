@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vantage Dash</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="header">
+    <span class="title">◆ Vantage Dash</span>
+    <button class="close-btn" id="close-btn" title="Close (Esc)">✕</button>
+  </header>
+
+  <div class="hud">
+    <div class="metric">
+      <span class="metric-lbl">Revenue</span>
+      <span class="metric-val blue" id="score">$0.0M</span>
+    </div>
+    <div class="metric">
+      <span class="metric-lbl">Pipeline</span>
+      <span class="metric-val green" id="pipeline">3</span>
+    </div>
+    <div class="metric">
+      <span class="metric-lbl">Quarter</span>
+      <span class="metric-val amber" id="quarter">Q1</span>
+    </div>
+    <div class="metric">
+      <span class="metric-lbl">All-Time Best</span>
+      <span class="metric-val" id="best">$0.0M</span>
+    </div>
+  </div>
+
+  <div class="arena">
+    <canvas id="canvas"></canvas>
+
+    <!-- Start screen -->
+    <div class="overlay" id="ov-start">
+      <span class="badge">Ready to Crush Quota?</span>
+      <div class="ov-title">Vantage Dash</div>
+      <p class="ov-sub">Collect <span class="gem-inline green">◆</span> data points to grow your pipeline.<br>
+        Grab <span class="gem-inline amber">◆</span> bonus deals before they expire!</p>
+      <button class="ov-btn" id="btn-start">Start Q1 →</button>
+      <span class="hint">Arrow keys / WASD · mobile swipe</span>
+    </div>
+
+    <!-- Game over screen -->
+    <div class="overlay hidden" id="ov-over">
+      <span class="badge red">Deal Lost</span>
+      <div class="ov-title lost">Missed Quota</div>
+      <div class="stats-row">
+        <div class="stat">
+          <span class="stat-lbl">Revenue</span>
+          <span class="stat-val" id="final-score">$0.0M</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-lbl">Pipeline</span>
+          <span class="stat-val" id="final-len">3</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-lbl">Best Ever</span>
+          <span class="stat-val gold" id="final-best">$0.0M</span>
+        </div>
+      </div>
+      <button class="ov-btn" id="btn-restart">New Quarter →</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
