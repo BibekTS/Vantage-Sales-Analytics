@@ -339,11 +339,12 @@ body {
   margin-bottom: 2px; user-select: none;
   position: relative;
 }
-.nav-item:hover { background: rgba(59,130,246,.06); color: var(--text-primary); }
+.nav-item:hover { background: rgba(59,130,246,.07); color: var(--text-primary); }
 .nav-item.active {
-  background: rgba(59,130,246,.12);
+  background: rgba(59,130,246,.1);
   color: var(--accent);
-  border-color: rgba(59,130,246,.2);
+  border-color: rgba(59,130,246,.18);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .ni-icon {
   width: 30px; height: 30px; border-radius: 7px;
@@ -352,6 +353,7 @@ body {
   font-size: 14px; flex-shrink: 0; transition: background .18s;
 }
 .nav-item.active .ni-icon { background: rgba(59,130,246,.15); }
+.ni-icon svg { display: block; flex-shrink: 0; }
 .ni-gear {
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
   background: none; border: none; color: var(--text-muted); font-size: 12px;
@@ -600,6 +602,49 @@ body {
 .cp-select { appearance: none; cursor: pointer; }
 .cp-hint { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
 
+/* ── Config Panel: Static value & Connect row ─────────────────────────── */
+.cp-static-value {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+  opacity: 0.7;
+}
+.cp-connect-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cp-connect-row .cp-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.cp-select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cp-advanced {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.cp-advanced summary {
+  padding: 8px 11px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.cp-advanced summary::-webkit-details-marker { display: none; }
+.cp-advanced summary::before { content: '▶ '; font-size: 9px; }
+.cp-advanced[open] summary::before { content: '▼ '; }
+.cp-advanced > div { padding: 0 11px 10px; }
+
 /* ── Config Panel: Bearer Token Discovery ──────────────────────────────── */
 .cp-token-row {
   display: flex;
@@ -755,6 +800,23 @@ body {
   transition: color .18s;
 }
 .sb-group-hdr:hover .sb-section-lbl { color: var(--text-secondary); }
+
+/* Liveboard group header — aligned to match regular nav items */
+.lb-group-hdr {
+  padding: 9px 12px;
+  gap: 11px;
+  border-radius: 8px;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-secondary);
+  justify-content: flex-start;
+}
+.lb-group-hdr:hover { background: rgba(59,130,246,.07); color: var(--text-primary); }
+.lb-group-hdr .adv-chevron { margin-left: auto; }
+
+/* Sub-items indented under Liveboard */
+.lb-group { display: flex; flex-direction: column; padding-left: 12px; border-left: 1px solid var(--border); margin-left: 26px; margin-bottom: 2px; }
 .adv-chevron {
   font-size: 14px; color: var(--text-muted);
   transition: transform .25s;
@@ -1111,7 +1173,6 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
 
 /* ── Liveboard Group Toggle ────────────────────────────── */
-.lb-group { display: flex; flex-direction: column; }
 .lb-group.collapsed { display: none; }
 
 /* ── Custom Filter Bar ────────────────────────────────── */

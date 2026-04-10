@@ -1,0 +1,139 @@
+========================================================
+  THOUGHTSPOT SDK & REST API REFERENCE
+  Custom Liveboard Filter Integration
+========================================================
+
+--------------------------------------------------------
+  VISUAL EMBED SDK
+  Package: @thoughtspot/visual-embed-sdk
+--------------------------------------------------------
+
+IMPORT
+  import { LiveboardEmbed, HostEvent, EmbedEvent } from '@thoughtspot/visual-embed-sdk';
+
+
+HOST EVENTS (your app → ThoughtSpot)
+--------------------------------------
+  HostEvent.GetFilters
+    - Description : Read current filters applied on the Liveboard
+    - Min Version : SDK 1.23.0 / ThoughtSpot 9.4.0.cl
+    - Usage       :
+        const filters = await embed.trigger(HostEvent.GetFilters);
+        console.log(filters);
+        // Returns { liveboardFilters: [...], runtimeFilters: [...] }
+
+  HostEvent.UpdateFilters
+    - Description : Push filter values into the embedded Liveboard
+    - Min Version : SDK 1.23.0 / ThoughtSpot 9.4.0.cl
+    - Usage (single value):
+        embed.trigger(HostEvent.UpdateFilters, {
+          filter: {
+            column: 'Country',
+            oper: 'IN',
+            values: ['USA']
+          }
+        });
+    - Usage (multiple values):
+        embed.trigger(HostEvent.UpdateFilters, {
+          filters: [
+            { column: 'Country', oper: 'IN', values: ['USA', 'Canada'] },
+            { column: 'Region',  oper: 'IN', values: ['West', 'East'] }
+          ]
+        });
+
+
+EMBED EVENTS (ThoughtSpot → your app)
+--------------------------------------
+  EmbedEvent.FilterChanged
+    - Description : Fires when a user changes a filter inside ThoughtSpot
+    - Min Version : SDK 1.23.0 / ThoughtSpot 9.4.0.cl
+    - Usage       :
+        embed.on(EmbedEvent.FilterChanged, (payload) => {
+          console.log('Filter changed:', payload);
+          // Sync your custom dropdown UI here
+        });
+
+
+--------------------------------------------------------
+  REST API v2
+  Base URL: https://YOUR_TS_HOST/api/rest/2.0
+--------------------------------------------------------
+
+ENDPOINT: Fetch Liveboard Data
+-------------------------------
+  Path    : POST /api/rest/2.0/metadata/liveboard/data
+  Purpose : Fetch liveboard/visualization data.
+            Use this to get distinct column values
+            for populating a custom filter dropdown.
+  Min Version: ThoughtSpot 9.0.0.cl
+
+  Request Body:
+    {
+      "metadata_identifier"     : "LIVEBOARD_GUID",        // required
+      "visualization_identifiers": ["VIZ_GUID"],           // optional, target a specific viz
+      "record_size"             : 1000,
+      "record_offset"           : 0
+    }
+
+  Response (key fields):
+    {
+      "metadata_id"   : "...",
+      "metadata_name" : "...",
+      "contents": [
+        {
+          "column_names"           : ["Country", "Sales", ...],
+          "data_rows"              : [["USA", 1000], ["Canada", 800], ...],
+          "available_data_row_count": 150,
+          "returned_data_row_count" : 150
+        }
+      ]
+    }
+
+  Extract distinct values (JavaScript):
+    const countryIndex = data.contents[0].column_names.indexOf('Country');
+    const countries = [...new Set(
+      data.contents[0].data_rows.map(row => row[countryIndex])
+    )];
+
+
+--------------------------------------------------------
+  FILTER FLOW — QUICK REFERENCE
+--------------------------------------------------------
+
+  STEP 1 — Populate custom dropdown on page load
+    REST POST /api/rest/2.0/metadata/liveboard/data
+      → Extract distinct column values (e.g. Country)
+      → Populate your <select> or custom filter UI
+
+  STEP 2 — User selects a value in your custom filter
+    embed.trigger(HostEvent.UpdateFilters, {
+      filter: { column: 'Country', oper: 'IN', values: [selectedValue] }
+    });
+      → Liveboard re-renders with filtered data
+
+  STEP 3 — User changes filter inside ThoughtSpot (optional sync)
+    embed.on(EmbedEvent.FilterChanged, (payload) => {
+      // Update your custom dropdown to reflect the new filter state
+    });
+
+
+--------------------------------------------------------
+  SUPPORTED FILTER OPERATORS (oper values)
+--------------------------------------------------------
+  EQ       - Equals
+  NE       - Not equals
+  IN       - In list
+  NOT_IN   - Not in list
+  LT       - Less than
+  LE       - Less than or equal
+  GT       - Greater than
+  GE       - Greater than or equal
+  CONTAINS - Contains string
+  BEGINS_WITH - Begins with string
+  ENDS_WITH   - Ends with string
+  BW_INC   - Between (inclusive)
+
+
+========================================================
+  END OF REFERENCE
+========================================================

@@ -221,48 +221,46 @@
 
     <nav class="sb-nav">
       <div class="nav-item" data-section="search" onclick="switchSection('search')">
-        <div class="ni-icon">🔍</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.2"/><line x1="10.2" y1="10.2" x2="14" y2="14"/></svg></div>
         <span>Search Data</span>
         <button class="ni-gear" onclick="openEmbedOpts('search',event)" title="SearchEmbed options">⚙<span class="ni-gear-badge" id="ngb-search"></span></button>
       </div>
       <div class="nav-item" data-section="spotter" onclick="switchSection('spotter')">
-        <div class="ni-icon">🤖</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5L9.5 6 14 7.5 9.5 9 8 13.5 6.5 9 2 7.5 6.5 6z"/></svg></div>
         <span>Spotter AI</span>
         <button class="ni-gear" onclick="openEmbedOpts('spotter',event)" title="SpotterEmbed options">⚙<span class="ni-gear-badge" id="ngb-spotter"></span></button>
       </div>
       <div class="nav-item" data-section="nlsearch" onclick="switchSection('nlsearch')">
-        <div class="ni-icon">💬</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H2a.5.5 0 00-.5.5v7a.5.5 0 00.5.5h3.8L8 13l2.2-2.5H14a.5.5 0 00.5-.5V3a.5.5 0 00-.5-.5z"/></svg></div>
         <span>NL Search</span>
-        <button class="ni-gear" onclick="openEmbedOpts('nlsearch',event)" title="SageEmbed options">⚙<span class="ni-gear-badge" id="ngb-nlsearch"></span></button>
+        <button class="ni-gear" onclick="openEmbedOpts('nlsearch',event)" title="SearchBarEmbed options">⚙<span class="ni-gear-badge" id="ngb-nlsearch"></span></button>
       </div>
       <!-- Liveboard group header -->
       <div class="sb-group-hdr lb-group-hdr" onclick="toggleLiveboardGroup()">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="ni-icon">📊</div>
-          <span>Liveboard</span>
-        </div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="8" width="3.5" height="6" rx=".8"/><rect x="6.3" y="4.5" width="3.5" height="9.5" rx=".8"/><rect x="11.5" y="1.5" width="3.5" height="12.5" rx=".8"/></svg></div>
+        <span>Liveboard</span>
         <span class="adv-chevron open" id="lb-chevron">›</span>
       </div>
 
       <!-- Liveboard sub-items (expanded by default) -->
       <div class="lb-group" id="lb-group">
         <div class="nav-item adv-item" data-section="liveboard" onclick="switchSection('liveboard')">
-          <div class="ni-icon">📋</div>
+          <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="2"/><line x1="4.5" y1="5.5" x2="11.5" y2="5.5"/><line x1="4.5" y1="8.5" x2="11.5" y2="8.5"/><line x1="4.5" y1="11.5" x2="8.5" y2="11.5"/></svg></div>
           <span>Standard</span>
           <button class="ni-gear" onclick="openEmbedOpts('liveboard',event)" title="LiveboardEmbed options">⚙<span class="ni-gear-badge" id="ngb-liveboard"></span></button>
         </div>
         <div class="nav-item adv-item" data-section="liveboard-custom" onclick="switchSection('liveboard-custom')">
-          <div class="ni-icon">🎛</div>
+          <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12l-4.5 5.5v4.5l-3-1.5V8.5z"/></svg></div>
           <span>Custom Filters</span>
         </div>
       </div>
       <div class="nav-item" data-section="viz" onclick="switchSection('viz')">
-        <div class="ni-icon">📈</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,13 5,7.5 9.5,10 14,3"/><circle cx="14" cy="3" r="1.8" fill="currentColor" stroke="none"/></svg></div>
         <span>Visualization</span>
         <button class="ni-gear" onclick="openEmbedOpts('viz',event)" title="LiveboardEmbed+vizId options">⚙<span class="ni-gear-badge" id="ngb-viz"></span></button>
       </div>
       <div class="nav-item" data-section="fullapp" onclick="switchSection('fullapp')">
-        <div class="ni-icon">🖥</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="9.5" rx="1.5"/><line x1="5" y1="14" x2="11" y2="14"/><line x1="8" y1="11.5" x2="8" y2="14"/></svg></div>
         <span>Full App</span>
         <button class="ni-gear" onclick="openEmbedOpts('fullapp',event)" title="AppEmbed options">⚙<span class="ni-gear-badge" id="ngb-fullapp"></span></button>
       </div>
@@ -280,37 +278,37 @@
     <!-- Advanced sub-items (collapsed by default) -->
     <div class="adv-group" id="adv-group">
       <div class="nav-item adv-item" data-feature="filters" onclick="openFeaturePanel('filters')">
-        <div class="ni-icon">🎛</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="4" y1="8" x2="12" y2="8"/><line x1="6" y1="12" x2="10" y2="12"/></svg></div>
         <span>Runtime Filters</span>
       </div>
       <div class="nav-item adv-item" data-feature="params" onclick="openFeaturePanel('params')">
-        <div class="ni-icon">🔢</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><line x1="1" y1="4" x2="15" y2="4"/><circle cx="5" cy="4" r="2"/><line x1="1" y1="12" x2="15" y2="12"/><circle cx="11" cy="12" r="2"/></svg></div>
         <span>Runtime Parameters</span>
       </div>
       <div class="nav-item adv-item" data-feature="actions" onclick="openFeaturePanel('actions')">
-        <div class="ni-icon">🎭</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2l2.5 2.5-8 8-3.5.5.5-3.5z"/><line x1="9.5" y1="4" x2="12" y2="6.5"/></svg></div>
         <span>Modify Actions</span>
       </div>
       <div class="nav-item adv-item" data-dev-only="true" data-feature="custom-action" onclick="openFeaturePanel('custom-action')">
-        <div class="ni-icon">⚡</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5L3.5 9H8L7 14.5 12.5 7H8.5z"/></svg></div>
         <span>Custom Actions</span>
       </div>
       <div class="nav-item adv-item" data-dev-only="true" data-feature="code-action" onclick="openFeaturePanel('code-action')">
-        <div class="ni-icon">&lt;/&gt;</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="5.5,4.5 1.5,8 5.5,11.5"/><polyline points="10.5,4.5 14.5,8 10.5,11.5"/></svg></div>
         <span>Code-Based Actions</span>
       </div>
       <div class="nav-item adv-item" data-dev-only="true" data-feature="host-events" onclick="openFeaturePanel('host-events')">
-        <div class="ni-icon">📡</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="1.5" fill="currentColor"/><path d="M5.2 5.2a4 4 0 000 5.6"/><path d="M10.8 5.2a4 4 0 010 5.6"/><path d="M2.9 2.9a7.5 7.5 0 000 10.2"/><path d="M13.1 2.9a7.5 7.5 0 010 10.2"/></svg></div>
         <span>Host Events</span>
       </div>
       <div class="nav-item adv-item" data-feature="styles" onclick="openFeaturePanel('styles')">
-        <div class="ni-icon">🎨</div>
+        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2l3 3-6.5 6.5a2 2 0 01-2.8 0l-.7-.7a2 2 0 010-2.8z"/><path d="M3.5 12.5c0 1-.4 1.5-1 2a2.5 2.5 0 002 .5c.8 0 1.5-.6 1.5-1.5v-.5L5 12l-1.5.5z"/></svg></div>
         <span>Custom Styles</span>
       </div>
     </div>
 
     <div class="sb-footer">
-      <button class="back-btn" onclick="exitAnalyticsMode()">← Back to Home</button>
+      <button class="back-btn" onclick="exitAnalyticsMode()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="10,3 4,8 10,13"/></svg>Back to Home</button>
     </div>
   </div>
 
@@ -456,56 +454,54 @@
       <div class="cp-group-title">ThoughtSpot Connection</div>
       <div class="cp-field">
         <label class="cp-label">Host URL</label>
-        <input class="cp-input" id="cfg-host" type="text" placeholder="https://your-instance.thoughtspot.cloud">
+        <div class="cp-connect-row">
+          <input class="cp-input" id="cfg-host" type="text" placeholder="https://your-instance.thoughtspot.cloud"
+                 onkeydown="if(event.key==='Enter')connectAndDiscover()">
+          <button class="cp-discover-btn" onclick="connectAndDiscover()">Connect</button>
+        </div>
+        <div class="cp-hint" id="discover-status" style="display:none"></div>
       </div>
       <div class="cp-field">
         <label class="cp-label">Auth Type</label>
-        <select class="cp-select" id="cfg-auth">
-          <option value="None">None</option>
-          <option value="TrustedAuthToken">Trusted Auth Token</option>
-          <option value="EmbedSecret">Embed Secret</option>
-          <option value="SAMLRedirect">SAML / SSO</option>
-          <option value="OIDCRedirect">OIDC</option>
-        </select>
+        <span class="cp-static-value">None</span>
       </div>
-      <div class="cp-field">
-        <label class="cp-label">Bearer Token (Optional)</label>
-        <div class="cp-token-row">
+      <details class="cp-advanced" id="cfg-advanced" data-dev-only="true">
+        <summary>Advanced: use token for discovery</summary>
+        <div class="cp-field" style="margin-top:10px;">
+          <label class="cp-label">Bearer Token</label>
           <input class="cp-input" id="cfg-token" type="password" autocomplete="off"
                  placeholder="Paste your ThoughtSpot bearer token" spellcheck="false">
-          <button class="cp-discover-btn" onclick="runDiscover()">Discover</button>
+          <label class="cp-check-label" style="margin-top:6px;">
+            <input type="checkbox" id="cfg-token-persist"> Remember for this session
+          </label>
         </div>
-        <label class="cp-check-label">
-          <input type="checkbox" id="cfg-token-persist"> Remember for this session
-        </label>
-        <div class="cp-hint" id="discover-status" style="display:none"></div>
-      </div>
+      </details>
     </div>
 
     <div class="cp-group">
       <div class="cp-group-title">Data Objects</div>
-      <div class="cp-hint">Use the bearer token above to discover your org's worksheets, liveboards, and answers.</div>
+      <div class="cp-hint" style="margin-bottom:12px;">Enter the Host URL and click Connect to load available objects.</div>
+      <input type="hidden" id="cfg-worksheet">
+      <input type="hidden" id="cfg-liveboard">
+      <input type="hidden" id="cfg-viz">
       <div class="cp-field">
         <label class="cp-label">Worksheet / Model</label>
-        <input class="cp-input" id="cfg-worksheet" type="text" placeholder="Enter GUID or discover via token">
-        <select class="cp-select" id="cfg-worksheet-sel" style="display:none" onchange="onWorksheetSelect(this.value)">
-          <option value="">Select a worksheet...</option>
+        <select class="cp-select" id="cfg-worksheet-sel" disabled onchange="onWorksheetSelect(this.value)">
+          <option value="">— connect first —</option>
         </select>
         <div class="cp-hint">Used by: Search Data, Spotter AI, NL Search</div>
       </div>
       <div class="cp-field">
         <label class="cp-label">Liveboard</label>
-        <input class="cp-input" id="cfg-liveboard" type="text" placeholder="Enter GUID or discover via token">
-        <select class="cp-select" id="cfg-liveboard-sel" style="display:none" onchange="onLiveboardSelect(this.value)">
-          <option value="">Select a liveboard...</option>
+        <select class="cp-select" id="cfg-liveboard-sel" disabled onchange="onLiveboardSelect(this.value)">
+          <option value="">— connect first —</option>
         </select>
         <div class="cp-hint">Used by: Liveboard, Visualization</div>
       </div>
       <div class="cp-field">
         <label class="cp-label">Visualization</label>
-        <input class="cp-input" id="cfg-viz" type="text" placeholder="Enter GUID or discover via token">
-        <select class="cp-select" id="cfg-viz-sel" style="display:none" onchange="onVizSelect(this.value)">
-          <option value="">Select a visualization...</option>
+        <select class="cp-select" id="cfg-viz-sel" disabled onchange="onVizSelect(this.value)">
+          <option value="">— select a liveboard first —</option>
         </select>
         <div class="cp-hint">Used by: Visualization</div>
       </div>

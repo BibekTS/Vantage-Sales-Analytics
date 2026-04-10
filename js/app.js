@@ -63,6 +63,7 @@ function getBearerHeaders() {
 async function tsApiFetch(host, path, options = {}) {
   const url = `${host.replace(/\/$/, '')}${path}`;
   return fetch(url, {
+    credentials: 'include',
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -76,22 +77,19 @@ async function tsApiFetch(host, path, options = {}) {
 /**
  * Verify token and get user/org info
  */
-async function discoverOrg(host, token) {
+async function discoverOrg(host) {
   try {
-    bearerToken = token; // temporarily set for getBearerHeaders()
     const resp = await tsApiFetch(host, '/api/rest/2.0/auth/session/user');
     if (!resp.ok) {
-      bearerToken = '';
       return { ok: false, error: `HTTP ${resp.status}` };
     }
     const data = await resp.json();
     return {
       ok: true,
       userName: data.display_name || data.name || 'User',
-      orgName: data.org_name || 'Unknown Org',
+      orgName: data.current_org?.name || data.orgs?.[0]?.name || 'Unknown Org',
     };
   } catch (err) {
-    bearerToken = '';
     return { ok: false, error: err.message };
   }
 }
@@ -99,9 +97,8 @@ async function discoverOrg(host, token) {
 /**
  * Discover worksheets, liveboards, and answers in parallel
  */
-async function discoverObjects(host, token) {
+async function discoverObjects(host) {
   try {
-    bearerToken = token;
     const requests = [
       // Worksheets
       tsApiFetch(host, '/api/rest/2.0/metadata/search', {
@@ -177,16 +174,22 @@ async function discoverObjects(host, token) {
 /**
  * Discover visualization tabs within a liveboard
  */
-async function discoverViz(host, token, liveboardId) {
+async function discoverViz(host, liveboardId) {
   try {
-    bearerToken = token;
-    const resp = await tsApiFetch(host, `/api/rest/2.0/metadata/liveboard/${liveboardId}`);
+    // POST /metadata/liveboard/data with record_size:1 returns contents[] with
+    // visualization_id + visualization_name for every viz on the liveboard.
+    const resp = await tsApiFetch(host, '/api/rest/2.0/metadata/liveboard/data', {
+      method: 'POST',
+      body: JSON.stringify({ metadata_identifier: liveboardId, record_size: 1 }),
+    });
     if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
     const data = await resp.json();
-    const vizzes = (data.visualizations || []).map(v => ({
-      id: v.visualization_id || v.id,
-      name: v.display_name || v.name || 'Untitled',
-    }));
+    const vizzes = (data.contents || [])
+      .filter(v => v.visualization_id)
+      .map(v => ({
+        id: v.visualization_id,
+        name: v.visualization_name || 'Untitled',
+      }));
     return { ok: true, visualizations: vizzes };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -235,24 +238,13 @@ function populateDiscoveryDropdowns() {
 }
 
 /**
- * Toggle visibility between text inputs and select dropdowns for discovery
+ * Enable or disable the discovery dropdowns
  */
-function setDiscoveryMode(enabled) {
-  const fields = [
-    { text: 'cfg-worksheet', select: 'cfg-worksheet-sel' },
-    { text: 'cfg-liveboard', select: 'cfg-liveboard-sel' },
-    { text: 'cfg-viz', select: 'cfg-viz-sel' },
-  ];
-
-  fields.forEach(f => {
-    const textEl = document.getElementById(f.text);
-    const selEl = document.getElementById(f.select);
-    if (textEl && selEl) {
-      textEl.style.display = enabled ? 'none' : 'block';
-      selEl.style.display = enabled ? 'block' : 'none';
-    }
+function _enableDiscoverySelects(enabled) {
+  ['cfg-worksheet-sel', 'cfg-liveboard-sel', 'cfg-viz-sel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
   });
-
   const answerField = document.getElementById('cfg-answer-field');
   if (answerField) answerField.style.display = enabled ? 'block' : 'none';
 }
@@ -503,40 +495,47 @@ window.toggleConfig = function () {
   if (!isOpen) {
     const c = window.TS_CONFIG;
     document.getElementById('cfg-host').value           = c.thoughtSpotHost;
-    document.getElementById('cfg-auth').value           = c.authType;
-    document.getElementById('cfg-worksheet').value      = c.worksheetId;
-    document.getElementById('cfg-liveboard').value      = c.liveboardId;
-    document.getElementById('cfg-viz').value            = c.vizId;
     document.getElementById('cfg-search-token').value   = c.searchTokenString || '';
     document.getElementById('cfg-execute-search').value = String(c.executeSearch ?? false);
 
-    // Restore token from sessionStorage if available and not already set in memory
+    // Restore token from sessionStorage if available
     const sessionToken = sessionStorage.getItem('ts_bearer_token');
     if (sessionToken && !bearerToken) {
       bearerToken = sessionToken;
       document.getElementById('cfg-token-persist').checked = true;
-      const statusEl = document.getElementById('discover-status');
-      if (discoveredOrg) {
-        statusEl.style.display = 'block';
-        statusEl.innerHTML = `✓ Session token active · Org: ${discoveredOrg.orgName}`;
-      }
-    } else if (sessionToken && bearerToken) {
-      // Already have token in memory
-      document.getElementById('cfg-token-persist').checked = true;
     }
 
-    // Sync discovery mode based on whether we have discovered objects
-    setDiscoveryMode(discoveredObjects.liveboards.length > 0);
+    if (discoveredObjects.liveboards.length > 0) {
+      // Already connected — re-populate and enable dropdowns
+      populateDiscoveryDropdowns();
+      _enableDiscoverySelects(true);
+      _syncSelectsToConfig(c);
+    } else if (c.thoughtSpotHost) {
+      // Auto-connect on open if host is configured
+      connectAndDiscover();
+    }
   }
 
   panel.classList.toggle('open');
   overlay.classList.toggle('visible');
 };
 
+/**
+ * Sync the select dropdowns to show the values currently in TS_CONFIG
+ */
+function _syncSelectsToConfig(c) {
+  const wsEl = document.getElementById('cfg-worksheet-sel');
+  if (wsEl && c.worksheetId) wsEl.value = c.worksheetId;
+  const lbEl = document.getElementById('cfg-liveboard-sel');
+  if (lbEl && c.liveboardId) lbEl.value = c.liveboardId;
+  const vzEl = document.getElementById('cfg-viz-sel');
+  if (vzEl && c.vizId) vzEl.value = c.vizId;
+}
+
 window.applyConfig = function () {
   const c = window.TS_CONFIG;
   c.thoughtSpotHost   = document.getElementById('cfg-host').value.trim();
-  c.authType          = document.getElementById('cfg-auth').value;
+  c.authType          = 'None';
   c.worksheetId       = document.getElementById('cfg-worksheet').value.trim();
   c.liveboardId       = document.getElementById('cfg-liveboard').value.trim();
   c.vizId             = document.getElementById('cfg-viz').value.trim();
@@ -551,59 +550,48 @@ window.applyConfig = function () {
   logEvent('Config', 'Settings applied — reloading embed');
 };
 
-window.runDiscover = async function() {
+window.connectAndDiscover = async function() {
   const host = document.getElementById('cfg-host').value.trim();
-  const token = document.getElementById('cfg-token').value.trim();
-
-  if (!host) {
-    alert('Please enter a Host URL');
-    return;
-  }
-  if (!token) {
-    alert('Please enter a Bearer Token');
-    return;
-  }
+  if (!host) { alert('Please enter a Host URL'); return; }
 
   const statusEl = document.getElementById('discover-status');
   statusEl.style.display = 'block';
-  statusEl.innerHTML = '🔄 Discovering...';
+  statusEl.textContent = '🔄 Connecting…';
 
-  // Verify token and get org info
-  const orgResult = await discoverOrg(host, token);
+  // Use bearer token from advanced section if provided
+  const tokenInput = document.getElementById('cfg-token');
+  bearerToken = tokenInput?.value.trim() || '';
+
+  const orgResult = await discoverOrg(host);
   if (!orgResult.ok) {
-    statusEl.innerHTML = `❌ Error: ${orgResult.error}`;
+    bearerToken = '';
+    statusEl.innerHTML = `❌ ${orgResult.error} — try entering a token in <a href="#" onclick="document.getElementById('cfg-advanced').open=true;return false;">Advanced</a>`;
     logEvent('Discovery', `Failed: ${orgResult.error}`);
     return;
   }
 
-  // Store token in memory
-  bearerToken = token;
   discoveredOrg = { userName: orgResult.userName, orgName: orgResult.orgName };
 
-  // Persist to sessionStorage if user checked the checkbox
-  const persistCheckbox = document.getElementById('cfg-token-persist');
-  if (persistCheckbox.checked) {
-    try {
-      sessionStorage.setItem('ts_bearer_token', token);
-    } catch (e) {
-      console.warn('Could not save token to sessionStorage:', e);
+  // Persist token to sessionStorage if user checked the checkbox
+  if (bearerToken) {
+    const persistCheckbox = document.getElementById('cfg-token-persist');
+    if (persistCheckbox?.checked) {
+      try { sessionStorage.setItem('ts_bearer_token', bearerToken); } catch (e) {}
     }
   }
 
-  // Discover all objects
-  const objResult = await discoverObjects(host, token);
+  const objResult = await discoverObjects(host);
   if (!objResult.ok) {
-    statusEl.innerHTML = `⚠️ Token verified, but could not fetch objects: ${objResult.error}`;
+    statusEl.innerHTML = `⚠️ Connected but could not fetch objects: ${objResult.error}`;
     logEvent('Discovery', `Org verified, object discovery failed: ${objResult.error}`);
-  } else {
-    populateDiscoveryDropdowns();
+    return;
   }
 
-  // Show success status
-  statusEl.innerHTML = `✓ Connected as ${orgResult.userName} · Org: ${orgResult.orgName}`;
-  setDiscoveryMode(true);
-
-  logEvent('Discovery', `Token verified in org: ${orgResult.orgName}`);
+  populateDiscoveryDropdowns();
+  _enableDiscoverySelects(true);
+  _syncSelectsToConfig(window.TS_CONFIG);
+  statusEl.innerHTML = `✓ Connected as ${orgResult.userName}<br>Org: ${orgResult.orgName}`;
+  logEvent('Discovery', `Connected to ${orgResult.orgName}`);
 };
 
 window.onWorksheetSelect = function(worksheetId) {
@@ -619,10 +607,11 @@ window.onLiveboardSelect = async function(liveboardId) {
 
   // Discover viz tabs for this liveboard
   const host = document.getElementById('cfg-host').value.trim();
-  if (bearerToken && host) {
-    const vizResult = await discoverViz(host, bearerToken, liveboardId);
+  if (host) {
+    const vizSelect = document.getElementById('cfg-viz-sel');
+    vizSelect.innerHTML = '<option value="">— loading… —</option>';
+    const vizResult = await discoverViz(host, liveboardId);
     if (vizResult.ok) {
-      const vizSelect = document.getElementById('cfg-viz-sel');
       vizSelect.innerHTML = '<option value="">Select a visualization...</option>';
       vizResult.visualizations.forEach(v => {
         const opt = document.createElement('option');
@@ -630,6 +619,8 @@ window.onLiveboardSelect = async function(liveboardId) {
         opt.textContent = v.name;
         vizSelect.appendChild(opt);
       });
+    } else {
+      vizSelect.innerHTML = '<option value="">— no visualizations found —</option>';
     }
   }
 };
@@ -642,8 +633,6 @@ window.onVizSelect = function(vizId) {
 
 window.onAnswerSelect = function(answerId) {
   if (!answerId) return;
-  const answer = discoveredObjects.answers.find(a => a.id === answerId);
-  if (!answer) return;
   document.getElementById('cfg-worksheet').value = answerId;
   document.getElementById('cfg-viz').value = answerId;
   window.TS_CONFIG.worksheetId = answerId;
@@ -1901,12 +1890,13 @@ window.resetAll = function() {
   const cfgHost = document.getElementById('cfg-host');
   if (cfgHost) {
     cfgHost.value = c.thoughtSpotHost || '';
-    document.getElementById('cfg-auth').value           = c.authType || '';
     document.getElementById('cfg-worksheet').value      = c.worksheetId || '';
     document.getElementById('cfg-liveboard').value      = c.liveboardId || '';
     document.getElementById('cfg-viz').value            = c.vizId || '';
     document.getElementById('cfg-search-token').value   = c.searchTokenString || '';
     document.getElementById('cfg-execute-search').value = String(c.executeSearch ?? false);
+    // Sync dropdowns to restored values if discovery is active
+    if (discoveredObjects.liveboards.length > 0) _syncSelectsToConfig(c);
   }
 
   // Clear action checkboxes
