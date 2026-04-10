@@ -599,6 +599,51 @@ body {
 .cp-input::placeholder { color: var(--text-muted); }
 .cp-select { appearance: none; cursor: pointer; }
 .cp-hint { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+/* ── Config Panel: Bearer Token Discovery ──────────────────────────────── */
+.cp-token-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cp-token-row .cp-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.cp-discover-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.18s;
+  white-space: nowrap;
+}
+.cp-discover-btn:hover {
+  opacity: 0.9;
+}
+.cp-discover-btn:active {
+  opacity: 0.8;
+}
+.cp-check-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.cp-check-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* ── Embed Options Panel ──────────────────────────────────────────────── */
 #eo-overlay {
   display: none; position: fixed; inset: 0; z-index: 489;
@@ -1064,3 +1109,108 @@ body {
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+
+/* ── Liveboard Group Toggle ────────────────────────────── */
+.lb-group { display: flex; flex-direction: column; }
+.lb-group.collapsed { display: none; }
+
+/* ── Custom Filter Bar ────────────────────────────────── */
+.custom-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #1a1a2e;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.filter-dropdowns { display: flex; gap: 10px; flex-wrap: wrap; }
+.filter-dropdown-wrapper { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+.fdd-inner { display: flex; flex-direction: column; gap: 2px; }
+.filter-dropdown-wrapper label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255,255,255,0.45);
+}
+.filter-dropdown-wrapper select {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 5px 28px 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px;
+}
+.filter-dropdown-wrapper select:focus {
+  outline: none;
+  border-color: rgba(255,255,255,0.35);
+}
+.filter-clear-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.6);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.filter-clear-btn:hover { border-color: rgba(255,255,255,0.45); color: #fff; }
+
+/* ── Per-filter Remove Button ──────────────────────── */
+.filter-remove-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-top: 14px; /* align with select vertically */
+}
+.filter-remove-btn:hover { color: rgba(255,255,255,0.75); }
+
+/* ── Add Filter Button & Picker ───────────────────── */
+.add-filter-wrapper { position: relative; }
+.add-filter-btn {
+  background: transparent;
+  border: 1px dashed rgba(255,255,255,0.25);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.55);
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.add-filter-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; }
+.add-filter-picker {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 160px;
+  background: #1e1e35;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  z-index: 200;
+  overflow: hidden;
+}
+.afp-item {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #e0e0e0;
+  cursor: pointer;
+}
+.afp-item:hover { background: rgba(255,255,255,0.08); }
+.afp-loading, .afp-empty {
+  color: rgba(255,255,255,0.4);
+  cursor: default;
+  font-style: italic;
+}
+.afp-empty:hover, .afp-loading:hover { background: none; }

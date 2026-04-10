@@ -15,4 +15,9 @@ window.TS_CONFIG = {
   // ── Search Defaults ───────────────────────────────────────────────────────
   searchTokenString: '[Sales Amount] [Region]',   // Optional: pre-populate the search bar e.g. '[Sales Amount] [Region]'
   executeSearch: true,    // If true, auto-runs the searchTokenString on load
+
+  // ── Custom Filters ────────────────────────────────────────────────────────
+  filterColumns: ['Territory'],  // Backend will fetch distinct values from the liveboard
+
+  // devFeatures: true,  // Uncomment to force-show dev-only features (Custom Actions, Code-Based Actions, Host Events) in production
 };

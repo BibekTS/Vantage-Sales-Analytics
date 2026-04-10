@@ -10,7 +10,7 @@ import {
   init,
   AuthType,
   SearchEmbed,
-  SageEmbed,
+  SearchBarEmbed,
   SpotterEmbed,
   LiveboardEmbed,
   AppEmbed,
@@ -81,7 +81,7 @@ export function doRender(section, config, callbacks, options = {}) {
       break;
 
     case 'nlsearch':
-      embed = new SageEmbed('#ts-embed-container', {
+      embed = new SearchBarEmbed('#ts-embed-container', {
         frameParams: {},
         dataSources: [config.worksheetId],
         hiddenActions,
@@ -101,6 +101,7 @@ export function doRender(section, config, callbacks, options = {}) {
       break;
 
     case 'liveboard':
+    case 'liveboard-custom':
       embed = new LiveboardEmbed('#ts-embed-container', {
         frameParams: {},
         liveboardV2: true,

@@ -25,14 +25,237 @@ let bottomTab      = 'log';   // 'log' | 'code'
 let sectionOpts = { search: {}, nlsearch: {}, spotter: {}, liveboard: {}, viz: {}, fullapp: {} };
 let currentEoSection = null;
 
+let customFilters = {};       // { columnName: selectedValue } for Custom Filters view
+let availableColumns = [];    // column names from liveboard, cached after first fetch
+let activeFilterColumns = []; // mutable list; seeded from TS_CONFIG.filterColumns on buildFilterBar()
+
+// ── Bearer token discovery ────────────────────────────────────────────────────
+// SECURITY: bearerToken is never persisted to localStorage. It is stored in memory only.
+// If the user checks "Remember for this session", it is stored in sessionStorage (cleared on tab close).
+// This design balances convenience with security: a token never persists to disk, and a security
+// auditor can see at a glance that tokens are not long-lived storage.
+let bearerToken = '';
+let discoveredOrg = null;     // { userName, orgName } — display only, not sensitive
+let discoveredObjects = { worksheets: [], liveboards: [], answers: [] };
+
 const SECTION_META = {
-  search:    { title: 'Search Data',   badge: 'SearchEmbed'          },
-  spotter:   { title: 'Spotter AI',    badge: 'SpotterEmbed'         },
-  nlsearch:  { title: 'NL Search',     badge: 'SageEmbed'            },
-  liveboard: { title: 'Liveboard',     badge: 'LiveboardEmbed'       },
-  viz:       { title: 'Visualization', badge: 'LiveboardEmbed+vizId' },
-  fullapp:   { title: 'Full App',      badge: 'AppEmbed'             },
+  search:            { title: 'Search Data',        badge: 'SearchEmbed'           },
+  spotter:           { title: 'Spotter AI',         badge: 'SpotterEmbed'          },
+  nlsearch:          { title: 'NL Search',          badge: 'SearchBarEmbed'        },
+  liveboard:         { title: 'Liveboard',          badge: 'LiveboardEmbed'        },
+  'liveboard-custom': { title: 'Custom Liveboard',  badge: 'LiveboardEmbed+Filters' },
+  viz:               { title: 'Visualization',      badge: 'LiveboardEmbed+vizId'  },
+  fullapp:           { title: 'Full App',           badge: 'AppEmbed'              },
 };
+
+// ── Bearer token discovery helpers ───────────────────────────────────────────
+/**
+ * Returns authorization headers if bearerToken is set
+ */
+function getBearerHeaders() {
+  if (!bearerToken) return {};
+  return { 'Authorization': `Bearer ${bearerToken}` };
+}
+
+/**
+ * Thin wrapper for authenticated fetch to ThoughtSpot API
+ */
+async function tsApiFetch(host, path, options = {}) {
+  const url = `${host.replace(/\/$/, '')}${path}`;
+  return fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      ...getBearerHeaders(),
+      ...(options.headers || {}),
+    },
+  });
+}
+
+/**
+ * Verify token and get user/org info
+ */
+async function discoverOrg(host, token) {
+  try {
+    bearerToken = token; // temporarily set for getBearerHeaders()
+    const resp = await tsApiFetch(host, '/api/rest/2.0/auth/session/user');
+    if (!resp.ok) {
+      bearerToken = '';
+      return { ok: false, error: `HTTP ${resp.status}` };
+    }
+    const data = await resp.json();
+    return {
+      ok: true,
+      userName: data.display_name || data.name || 'User',
+      orgName: data.org_name || 'Unknown Org',
+    };
+  } catch (err) {
+    bearerToken = '';
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Discover worksheets, liveboards, and answers in parallel
+ */
+async function discoverObjects(host, token) {
+  try {
+    bearerToken = token;
+    const requests = [
+      // Worksheets
+      tsApiFetch(host, '/api/rest/2.0/metadata/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          metadata: [{ type: 'LOGICAL_TABLE' }],
+          record_size: 100,
+          sort_options: { field_name: 'NAME', order: 'ASC' },
+        }),
+      }),
+      // Liveboards
+      tsApiFetch(host, '/api/rest/2.0/metadata/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          metadata: [{ type: 'LIVEBOARD' }],
+          record_size: 100,
+          sort_options: { field_name: 'NAME', order: 'ASC' },
+        }),
+      }),
+      // Answers
+      tsApiFetch(host, '/api/rest/2.0/metadata/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          metadata: [{ type: 'ANSWER' }],
+          record_size: 100,
+          sort_options: { field_name: 'NAME', order: 'ASC' },
+        }),
+      }),
+    ];
+
+    const [wsResp, lbResp, ansResp] = await Promise.all(requests);
+
+    let worksheets = [];
+    let liveboards = [];
+    let answers = [];
+
+    if (wsResp.ok) {
+      const wsData = await wsResp.json();
+      console.log('[Discovery] Worksheets response:', wsData);
+      const objects = Array.isArray(wsData) ? wsData : [];
+      worksheets = objects
+        .filter(m => m.metadata_type === 'LOGICAL_TABLE')
+        .map(m => ({ id: m.metadata_id, name: m.metadata_name || 'Untitled' }));
+    }
+
+    if (lbResp.ok) {
+      const lbData = await lbResp.json();
+      console.log('[Discovery] Liveboards response:', lbData);
+      const objects = Array.isArray(lbData) ? lbData : [];
+      liveboards = objects
+        .filter(m => m.metadata_type === 'LIVEBOARD')
+        .map(m => ({ id: m.metadata_id, name: m.metadata_name || 'Untitled' }));
+    }
+
+    if (ansResp.ok) {
+      const ansData = await ansResp.json();
+      console.log('[Discovery] Answers response:', ansData);
+      const objects = Array.isArray(ansData) ? ansData : [];
+      answers = objects
+        .filter(m => m.metadata_type === 'ANSWER')
+        .map(m => ({ id: m.metadata_id, name: m.metadata_name || 'Untitled' }));
+    }
+
+    discoveredObjects = { worksheets, liveboards, answers };
+    console.log('[Discovery] Parsed objects:', discoveredObjects);
+    return { ok: true, worksheets, liveboards, answers };
+  } catch (err) {
+    console.error('[Discovery] Error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Discover visualization tabs within a liveboard
+ */
+async function discoverViz(host, token, liveboardId) {
+  try {
+    bearerToken = token;
+    const resp = await tsApiFetch(host, `/api/rest/2.0/metadata/liveboard/${liveboardId}`);
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+    const data = await resp.json();
+    const vizzes = (data.visualizations || []).map(v => ({
+      id: v.visualization_id || v.id,
+      name: v.display_name || v.name || 'Untitled',
+    }));
+    return { ok: true, visualizations: vizzes };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Populate all discovery dropdowns
+ */
+function populateDiscoveryDropdowns() {
+  // Worksheets
+  const wsSelect = document.getElementById('cfg-worksheet-sel');
+  if (wsSelect) {
+    wsSelect.innerHTML = '<option value="">Select a worksheet...</option>';
+    discoveredObjects.worksheets.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w.id;
+      opt.textContent = w.name;
+      wsSelect.appendChild(opt);
+    });
+  }
+
+  // Liveboards
+  const lbSelect = document.getElementById('cfg-liveboard-sel');
+  if (lbSelect) {
+    lbSelect.innerHTML = '<option value="">Select a liveboard...</option>';
+    discoveredObjects.liveboards.forEach(lb => {
+      const opt = document.createElement('option');
+      opt.value = lb.id;
+      opt.textContent = lb.name;
+      lbSelect.appendChild(opt);
+    });
+  }
+
+  // Answers
+  const ansSelect = document.getElementById('cfg-answer-sel');
+  if (ansSelect) {
+    ansSelect.innerHTML = '<option value="">Select an answer...</option>';
+    discoveredObjects.answers.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      ansSelect.appendChild(opt);
+    });
+  }
+}
+
+/**
+ * Toggle visibility between text inputs and select dropdowns for discovery
+ */
+function setDiscoveryMode(enabled) {
+  const fields = [
+    { text: 'cfg-worksheet', select: 'cfg-worksheet-sel' },
+    { text: 'cfg-liveboard', select: 'cfg-liveboard-sel' },
+    { text: 'cfg-viz', select: 'cfg-viz-sel' },
+  ];
+
+  fields.forEach(f => {
+    const textEl = document.getElementById(f.text);
+    const selEl = document.getElementById(f.select);
+    if (textEl && selEl) {
+      textEl.style.display = enabled ? 'none' : 'block';
+      selEl.style.display = enabled ? 'block' : 'none';
+    }
+  });
+
+  const answerField = document.getElementById('cfg-answer-field');
+  if (answerField) answerField.style.display = enabled ? 'block' : 'none';
+}
 
 // ── DOMContentLoaded bootstrap ───────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -51,6 +274,22 @@ document.addEventListener('DOMContentLoaded', () => {
       const app = document.getElementById('app');
       if (app) app.style.paddingTop = '44px';
     }
+  }
+
+  // Restore the last viewed section from localStorage
+  const savedSection = localStorage.getItem('currentSection');
+  if (savedSection && SECTION_META[savedSection]) {
+    console.log(`[Memory] Restoring section: ${savedSection}`);
+    switchSection(savedSection);
+  }
+
+  // Dev-only features: visible on localhost, hidden in production.
+  // Override by setting `devFeatures: true` in config.js.
+  const isDevEnv = window.TS_CONFIG.devFeatures !== undefined
+    ? window.TS_CONFIG.devFeatures
+    : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  if (!isDevEnv) {
+    document.querySelectorAll('[data-dev-only]').forEach(el => el.style.display = 'none');
   }
 });
 
@@ -221,6 +460,7 @@ window.enterAnalyticsMode = function () {
 };
 
 window.exitAnalyticsMode = function () {
+  localStorage.removeItem('currentSection');  // Clear saved section when exiting
   closeFeaturePanel();
   document.getElementById('app').classList.add('hidden');
   document.getElementById('landing').classList.remove('hidden');
@@ -229,6 +469,7 @@ window.exitAnalyticsMode = function () {
 window.switchSection = function switchSection(section) {
   if (currentSection === section) return;
   currentSection = section;
+  localStorage.setItem('currentSection', section);  // Save for page persistence
   if (currentEoSection) closeEmbedOpts();
 
   document.querySelectorAll('.nav-item').forEach(el => {
@@ -238,6 +479,18 @@ window.switchSection = function switchSection(section) {
   const meta = SECTION_META[section];
   document.getElementById('section-title').textContent = meta.title;
   document.getElementById('section-badge').textContent = meta.badge;
+
+  // Show/hide custom filter bar
+  const filterBar = document.getElementById('custom-filter-bar');
+  if (filterBar) {
+    if (section === 'liveboard-custom') {
+      console.log('[Filter] Showing filter bar and building it');
+      filterBar.style.display = 'flex';
+      buildFilterBar();   // async, non-blocking
+    } else {
+      filterBar.style.display = 'none';
+    }
+  }
 
   renderEmbedNow(section);
 };
@@ -256,6 +509,24 @@ window.toggleConfig = function () {
     document.getElementById('cfg-viz').value            = c.vizId;
     document.getElementById('cfg-search-token').value   = c.searchTokenString || '';
     document.getElementById('cfg-execute-search').value = String(c.executeSearch ?? false);
+
+    // Restore token from sessionStorage if available and not already set in memory
+    const sessionToken = sessionStorage.getItem('ts_bearer_token');
+    if (sessionToken && !bearerToken) {
+      bearerToken = sessionToken;
+      document.getElementById('cfg-token-persist').checked = true;
+      const statusEl = document.getElementById('discover-status');
+      if (discoveredOrg) {
+        statusEl.style.display = 'block';
+        statusEl.innerHTML = `✓ Session token active · Org: ${discoveredOrg.orgName}`;
+      }
+    } else if (sessionToken && bearerToken) {
+      // Already have token in memory
+      document.getElementById('cfg-token-persist').checked = true;
+    }
+
+    // Sync discovery mode based on whether we have discovered objects
+    setDiscoveryMode(discoveredObjects.liveboards.length > 0);
   }
 
   panel.classList.toggle('open');
@@ -278,6 +549,105 @@ window.applyConfig = function () {
   // Force re-render by calling renderEmbedNow directly (bypasses switchSection's no-op guard)
   if (section) renderEmbedNow(section);
   logEvent('Config', 'Settings applied — reloading embed');
+};
+
+window.runDiscover = async function() {
+  const host = document.getElementById('cfg-host').value.trim();
+  const token = document.getElementById('cfg-token').value.trim();
+
+  if (!host) {
+    alert('Please enter a Host URL');
+    return;
+  }
+  if (!token) {
+    alert('Please enter a Bearer Token');
+    return;
+  }
+
+  const statusEl = document.getElementById('discover-status');
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '🔄 Discovering...';
+
+  // Verify token and get org info
+  const orgResult = await discoverOrg(host, token);
+  if (!orgResult.ok) {
+    statusEl.innerHTML = `❌ Error: ${orgResult.error}`;
+    logEvent('Discovery', `Failed: ${orgResult.error}`);
+    return;
+  }
+
+  // Store token in memory
+  bearerToken = token;
+  discoveredOrg = { userName: orgResult.userName, orgName: orgResult.orgName };
+
+  // Persist to sessionStorage if user checked the checkbox
+  const persistCheckbox = document.getElementById('cfg-token-persist');
+  if (persistCheckbox.checked) {
+    try {
+      sessionStorage.setItem('ts_bearer_token', token);
+    } catch (e) {
+      console.warn('Could not save token to sessionStorage:', e);
+    }
+  }
+
+  // Discover all objects
+  const objResult = await discoverObjects(host, token);
+  if (!objResult.ok) {
+    statusEl.innerHTML = `⚠️ Token verified, but could not fetch objects: ${objResult.error}`;
+    logEvent('Discovery', `Org verified, object discovery failed: ${objResult.error}`);
+  } else {
+    populateDiscoveryDropdowns();
+  }
+
+  // Show success status
+  statusEl.innerHTML = `✓ Connected as ${orgResult.userName} · Org: ${orgResult.orgName}`;
+  setDiscoveryMode(true);
+
+  logEvent('Discovery', `Token verified in org: ${orgResult.orgName}`);
+};
+
+window.onWorksheetSelect = function(worksheetId) {
+  if (!worksheetId) return;
+  document.getElementById('cfg-worksheet').value = worksheetId;
+  window.TS_CONFIG.worksheetId = worksheetId;
+};
+
+window.onLiveboardSelect = async function(liveboardId) {
+  if (!liveboardId) return;
+  document.getElementById('cfg-liveboard').value = liveboardId;
+  window.TS_CONFIG.liveboardId = liveboardId;
+
+  // Discover viz tabs for this liveboard
+  const host = document.getElementById('cfg-host').value.trim();
+  if (bearerToken && host) {
+    const vizResult = await discoverViz(host, bearerToken, liveboardId);
+    if (vizResult.ok) {
+      const vizSelect = document.getElementById('cfg-viz-sel');
+      vizSelect.innerHTML = '<option value="">Select a visualization...</option>';
+      vizResult.visualizations.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.name;
+        vizSelect.appendChild(opt);
+      });
+    }
+  }
+};
+
+window.onVizSelect = function(vizId) {
+  if (!vizId) return;
+  document.getElementById('cfg-viz').value = vizId;
+  window.TS_CONFIG.vizId = vizId;
+};
+
+window.onAnswerSelect = function(answerId) {
+  if (!answerId) return;
+  const answer = discoveredObjects.answers.find(a => a.id === answerId);
+  if (!answer) return;
+  document.getElementById('cfg-worksheet').value = answerId;
+  document.getElementById('cfg-viz').value = answerId;
+  window.TS_CONFIG.worksheetId = answerId;
+  window.TS_CONFIG.vizId = answerId;
 };
 
 window.toggleBottomPanel = function() {
@@ -432,6 +802,286 @@ window.clearRuntimeFilters = function() {
   refreshCodeView();
   logEvent('HostEvent', 'UpdateRuntimeFilters: cleared');
 };
+
+// ── Custom Filter Bar (for liveboard-custom view) ──────────────────────
+window.toggleLiveboardGroup = function() {
+  const group = document.getElementById('lb-group');
+  const chevron = document.getElementById('lb-chevron');
+  group.classList.toggle('collapsed');
+  chevron.classList.toggle('open');
+};
+
+async function fetchFilterOptions(column) {
+  const url = `${window.TS_CONFIG.thoughtSpotHost}/api/rest/2.0/metadata/liveboard/data`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...getBearerHeaders(),
+      },
+      body: JSON.stringify({
+        metadata_identifier: window.TS_CONFIG.liveboardId,
+        record_size: 1000,
+        record_offset: 0,
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[Filter] API failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+    const data = await res.json();
+    console.log(`[Filter] API response for ${column}:`, data);
+    const rows = data?.contents?.[0]?.data_rows ?? [];
+    const cols = data?.contents?.[0]?.column_names ?? [];
+    console.log(`[Filter] Available columns:`, cols);
+    const idx = cols.indexOf(column);
+    if (idx === -1) {
+      console.warn(`[Filter] Column "${column}" not found in liveboard`);
+      return [];
+    }
+    const values = [...new Set(rows.map(r => r[idx]).filter(v => v != null))].sort();
+    console.log(`[Filter] Distinct values for ${column}:`, values);
+    return values;
+  } catch (err) {
+    console.error(`[Filter] Error fetching ${column}:`, err);
+    return [];
+  }
+}
+
+async function buildFilterBar() {
+  const container = document.getElementById('filter-dropdowns');
+  if (!container) {
+    console.warn('[Filter] filter-dropdowns container not found');
+    return;
+  }
+
+  // Seed activeFilterColumns from config on first call
+  if (activeFilterColumns.length === 0) {
+    activeFilterColumns = [...(window.TS_CONFIG.filterColumns ?? [])];
+  }
+
+  console.log('[Filter] Building filter bar for columns:', activeFilterColumns);
+  container.innerHTML = '';
+  customFilters = {};
+
+  for (const col of activeFilterColumns) {
+    const colName = typeof col === 'string' ? col : col.name;
+    console.log(`[Filter] Fetching values for: ${colName}`);
+
+    // Fetch directly from ThoughtSpot (frontend has auth cookies)
+    const values = await fetchFilterValuesFromThoughtSpot(colName);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'filter-dropdown-wrapper';
+    wrapper.dataset.column = colName;
+
+    // Inner div: label + select (stacked vertically)
+    const inner = document.createElement('div');
+    inner.className = 'fdd-inner';
+
+    const label = document.createElement('label');
+    label.textContent = colName;
+    const select = document.createElement('select');
+    select.innerHTML = `<option value="">All</option>` +
+      values.map(v => `<option value="${v}">${v}</option>`).join('');
+    select.addEventListener('change', () => onFilterChange(colName, select.value));
+    inner.append(label, select);
+
+    // Remove button
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'filter-remove-btn';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove ${colName} filter`;
+    removeBtn.addEventListener('click', () => removeDynamicFilter(colName));
+
+    wrapper.append(inner, removeBtn);
+    container.appendChild(wrapper);
+    console.log(`[Filter] Added dropdown for ${colName} with ${values.length} values`);
+  }
+}
+
+async function fetchFilterValuesFromThoughtSpot(column) {
+  try {
+    console.log(`[Filter] Fetching directly from ThoughtSpot: column=${column}`);
+
+    // Frontend calls ThoughtSpot directly (has auth cookies or bearer token)
+    const url = `${window.TS_CONFIG.thoughtSpotHost}/api/rest/2.0/metadata/liveboard/data`;
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...getBearerHeaders(),
+      },
+      body: JSON.stringify({
+        metadata_identifier: window.TS_CONFIG.liveboardId,
+        record_size: 10000,
+        record_offset: 0,
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn(`[Filter] ThoughtSpot API returned ${res.status}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const contents = data?.contents ?? [];
+
+    // Cache columns: start with the main visualization (contents[0]),
+    // then add columns from other visualizations that are likely filters
+    if (availableColumns.length === 0) {
+      const allCols = new Set();
+
+      // Always include all columns from the primary visualization (most likely to have filters)
+      const primaryViz = contents[0]?.column_names ?? [];
+      primaryViz.forEach(c => allCols.add(c));
+
+      // Also check other visualizations for additional columns
+      // (these might be filter-only columns or secondary visualizations)
+      for (let i = 1; i < contents.length; i++) {
+        (contents[i]?.column_names ?? []).forEach(c => allCols.add(c));
+      }
+
+      availableColumns = Array.from(allCols).sort();
+      console.log(`[Filter] Cached ${availableColumns.length} unique columns from ${contents.length} visualizations`);
+    }
+
+    // Find which visualization contains the requested column
+    const content = contents.find(c => (c.column_names ?? []).includes(column));
+    if (!content) {
+      console.warn(`[Filter] Column "${column}" not found in any visualization. Available: ${availableColumns.join(', ')}`);
+      return [];
+    }
+
+    const rows = content.data_rows ?? [];
+    const cols = content.column_names ?? [];
+    const idx = cols.indexOf(column);
+
+    const values = [...new Set(rows.map(r => {
+      const val = r[idx];
+      return val === null || val === undefined ? '{Null}' : String(val);
+    }))].sort((a, b) => {
+      if (a === '{Null}') return -1;
+      if (b === '{Null}') return 1;
+      return a.localeCompare(b);
+    });
+
+    console.log(`[Filter] ✓ Got ${values.length} distinct values: ${values.slice(0, 5).join(', ')}...`);
+    return values;
+  } catch (err) {
+    console.error(`[Filter] ✗ Failed to fetch from ThoughtSpot:`, err.message);
+    return [];
+  }
+}
+
+function onFilterChange(column, value) {
+  if (value) customFilters[column] = value;
+  else delete customFilters[column];
+  const filters = Object.entries(customFilters).map(([col, val]) => ({
+    column: col, oper: 'IN', values: [val],
+  }));
+  if (!currentEmbed) return;
+  currentEmbed.trigger(HostEvent.UpdateFilters, { filters });
+  logEvent('CustomFilter', `${column}: ${value || 'All'}`);
+  refreshCodeView();  // Update SDK Preview to show current filters
+}
+
+window.clearCustomFilters = function() {
+  customFilters = {};
+  activeFilterColumns = [...(window.TS_CONFIG.filterColumns ?? [])];
+  buildFilterBar();
+  if (currentEmbed) currentEmbed.trigger(HostEvent.UpdateFilters, { filters: [] });
+  logEvent('CustomFilter', 'All filters cleared');
+};
+
+// ── Dynamic Filter Management ─────────────────────────────────────────────
+
+window.toggleAddFilterPicker = function() {
+  const picker = document.getElementById('add-filter-picker');
+  const isOpen = picker.style.display !== 'none';
+  if (isOpen) { picker.style.display = 'none'; return; }
+  populateAddFilterPicker();
+  picker.style.display = 'block';
+  // close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function handler(e) {
+      if (!picker.contains(e.target) && e.target.id !== 'add-filter-btn') {
+        picker.style.display = 'none';
+        document.removeEventListener('click', handler);
+      }
+    });
+  }, 0);
+};
+
+function populateAddFilterPicker() {
+  const picker = document.getElementById('add-filter-picker');
+  if (availableColumns.length === 0) {
+    picker.innerHTML = '<div class="afp-item afp-loading">Loading…</div>';
+    return;
+  }
+  const unused = availableColumns.filter(c => !activeFilterColumns.includes(c));
+  if (unused.length === 0) {
+    picker.innerHTML = '<div class="afp-item afp-empty">All columns in use</div>';
+    return;
+  }
+  picker.innerHTML = unused
+    .map(c => `<div class="afp-item" onclick="addDynamicFilter('${c}')">${c}</div>`)
+    .join('');
+}
+
+window.addDynamicFilter = async function(column) {
+  document.getElementById('add-filter-picker').style.display = 'none';
+  if (activeFilterColumns.includes(column)) return;
+  activeFilterColumns.push(column);
+
+  const values = await fetchFilterValuesFromThoughtSpot(column);
+  const container = document.getElementById('filter-dropdowns');
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'filter-dropdown-wrapper';
+  wrapper.dataset.column = column;
+
+  // Inner div: label + select (stacked vertically)
+  const inner = document.createElement('div');
+  inner.className = 'fdd-inner';
+
+  const label = document.createElement('label');
+  label.textContent = column;
+  const select = document.createElement('select');
+  select.innerHTML = `<option value="">All</option>` +
+    values.map(v => `<option value="${v}">${v}</option>`).join('');
+  select.addEventListener('change', () => onFilterChange(column, select.value));
+  inner.append(label, select);
+
+  // Remove button
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'filter-remove-btn';
+  removeBtn.textContent = '×';
+  removeBtn.title = `Remove ${column} filter`;
+  removeBtn.addEventListener('click', () => removeDynamicFilter(column));
+
+  wrapper.append(inner, removeBtn);
+  container.appendChild(wrapper);
+  console.log(`[Filter] Added dynamic filter for ${column}`);
+};
+
+function removeDynamicFilter(column) {
+  activeFilterColumns = activeFilterColumns.filter(c => c !== column);
+  delete customFilters[column];
+  const wrapper = document.querySelector(`#filter-dropdowns [data-column="${column}"]`);
+  if (wrapper) wrapper.remove();
+  const filters = Object.entries(customFilters).map(([col, val]) => ({
+    column: col, oper: 'IN', values: [val],
+  }));
+  if (currentEmbed) currentEmbed.trigger(HostEvent.UpdateFilters, { filters });
+  console.log(`[Filter] Removed dynamic filter for ${column}`);
+  refreshCodeView();  // Update SDK Preview to reflect removed filter
+}
 
 // ── Runtime Parameters ────────────────────────────────────────────────
 let paramRowCount = 0;
@@ -826,9 +1476,9 @@ function generateEmbedCode() {
   const section = currentSection;
 
   const classNames = { search: 'SearchEmbed', spotter: 'SpotterEmbed',
-    nlsearch: 'SageEmbed', liveboard: 'LiveboardEmbed', viz: 'LiveboardEmbed', fullapp: 'AppEmbed' };
+    nlsearch: 'SearchBarEmbed', liveboard: 'LiveboardEmbed', 'liveboard-custom': 'LiveboardEmbed', viz: 'LiveboardEmbed', fullapp: 'AppEmbed' };
   const sectionNames = { search: 'Search Data', spotter: 'Spotter AI',
-    nlsearch: 'NL Search', liveboard: 'Liveboard', viz: 'Visualization', fullapp: 'Full App' };
+    nlsearch: 'NL Search', liveboard: 'Liveboard', 'liveboard-custom': 'Custom Filters', viz: 'Visualization', fullapp: 'Full App' };
 
   if (!section) {
     return [
@@ -836,6 +1486,63 @@ function generateEmbedCode() {
       '// Select a section from the sidebar to see',
       '// the active SDK configuration here.',
     ].join('\n');
+  }
+
+  // ── Custom Filters section — show the full REST + filter workflow ───
+  if (section === 'liveboard-custom') {
+    const cols = activeFilterColumns.length ? activeFilterColumns : (window.TS_CONFIG.filterColumns ?? []);
+    const lines = [
+      '// LiveboardEmbed · Custom Filters',
+      '// ─────────────────────────────────────────────────────',
+      '',
+      '// Step 1 — Fetch distinct filter values from the REST API',
+      `const res = await fetch('${c.thoughtSpotHost}/api/rest/2.0/metadata/liveboard/data', {`,
+      "  method: 'POST',",
+      "  credentials: 'include',",
+      "  headers: { 'Content-Type': 'application/json' },",
+      '  body: JSON.stringify({',
+      `    metadata_identifier: '${c.liveboardId}',`,
+      '    record_size: 10000,',
+      '  }),',
+      '});',
+      'const { contents } = await res.json();',
+      'const rows = contents[0].data_rows;',
+      'const cols = contents[0].column_names;',
+    ];
+
+    // One extraction block per active column
+    cols.forEach(col => {
+      const varName = col.replace(/\s+/g, '_');
+      lines.push(`// Extract distinct ${col} values`);
+      lines.push(`const idx_${varName} = cols.indexOf('${col}');`);
+      lines.push(`const values_${varName} = [...new Set(rows.map(r => r[idx_${varName}]))].sort();`);
+    });
+
+    lines.push('');
+    lines.push('// Step 2 — Render the LiveboardEmbed');
+    lines.push("const embed = new LiveboardEmbed('#ts-embed-container', {");
+    lines.push(`  liveboardId: '${c.liveboardId}',`);
+    lines.push('  liveboardV2: true,');
+    lines.push('}).render();');
+
+    // Step 3 — filters block
+    lines.push('');
+    lines.push('// Step 3 — Apply filter when user selects a value');
+    lines.push('embed.trigger(HostEvent.UpdateFilters, {');
+    lines.push('  filters: [');
+    if (Object.keys(customFilters).length) {
+      for (const [col, val] of Object.entries(customFilters)) {
+        lines.push(`    { column: '${col}', oper: 'IN', values: ['${val}'] }, // currently selected`);
+      }
+    } else {
+      cols.forEach(col => {
+        lines.push(`    { column: '${col}', oper: 'IN', values: [/* user selection */] },`);
+      });
+    }
+    lines.push('  ],');
+    lines.push('});');
+
+    return lines.join('\n');
   }
 
   const hk    = embedOptions._hiddenKeys   || [];

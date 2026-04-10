@@ -235,10 +235,26 @@
         <span>NL Search</span>
         <button class="ni-gear" onclick="openEmbedOpts('nlsearch',event)" title="SageEmbed options">⚙<span class="ni-gear-badge" id="ngb-nlsearch"></span></button>
       </div>
-      <div class="nav-item" data-section="liveboard" onclick="switchSection('liveboard')">
-        <div class="ni-icon">📊</div>
-        <span>Liveboard</span>
-        <button class="ni-gear" onclick="openEmbedOpts('liveboard',event)" title="LiveboardEmbed options">⚙<span class="ni-gear-badge" id="ngb-liveboard"></span></button>
+      <!-- Liveboard group header -->
+      <div class="sb-group-hdr lb-group-hdr" onclick="toggleLiveboardGroup()">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="ni-icon">📊</div>
+          <span>Liveboard</span>
+        </div>
+        <span class="adv-chevron open" id="lb-chevron">›</span>
+      </div>
+
+      <!-- Liveboard sub-items (expanded by default) -->
+      <div class="lb-group" id="lb-group">
+        <div class="nav-item adv-item" data-section="liveboard" onclick="switchSection('liveboard')">
+          <div class="ni-icon">📋</div>
+          <span>Standard</span>
+          <button class="ni-gear" onclick="openEmbedOpts('liveboard',event)" title="LiveboardEmbed options">⚙<span class="ni-gear-badge" id="ngb-liveboard"></span></button>
+        </div>
+        <div class="nav-item adv-item" data-section="liveboard-custom" onclick="switchSection('liveboard-custom')">
+          <div class="ni-icon">🎛</div>
+          <span>Custom Filters</span>
+        </div>
       </div>
       <div class="nav-item" data-section="viz" onclick="switchSection('viz')">
         <div class="ni-icon">📈</div>
@@ -275,15 +291,15 @@
         <div class="ni-icon">🎭</div>
         <span>Modify Actions</span>
       </div>
-      <div class="nav-item adv-item" data-feature="custom-action" onclick="openFeaturePanel('custom-action')">
+      <div class="nav-item adv-item" data-dev-only="true" data-feature="custom-action" onclick="openFeaturePanel('custom-action')">
         <div class="ni-icon">⚡</div>
         <span>Custom Actions</span>
       </div>
-      <div class="nav-item adv-item" data-feature="code-action" onclick="openFeaturePanel('code-action')">
+      <div class="nav-item adv-item" data-dev-only="true" data-feature="code-action" onclick="openFeaturePanel('code-action')">
         <div class="ni-icon">&lt;/&gt;</div>
         <span>Code-Based Actions</span>
       </div>
-      <div class="nav-item adv-item" data-feature="host-events" onclick="openFeaturePanel('host-events')">
+      <div class="nav-item adv-item" data-dev-only="true" data-feature="host-events" onclick="openFeaturePanel('host-events')">
         <div class="ni-icon">📡</div>
         <span>Host Events</span>
       </div>
@@ -308,6 +324,16 @@
         <span class="c-badge" id="section-badge">SearchEmbed</span>
       </div>
       <button class="cfg-btn" onclick="toggleConfig()">⚙ Configure</button>
+    </div>
+
+    <!-- Custom filter bar (shown only in Custom Filters view) -->
+    <div id="custom-filter-bar" class="custom-filter-bar" style="display:none;">
+      <div id="filter-dropdowns" class="filter-dropdowns"></div>
+      <div class="add-filter-wrapper">
+        <button id="add-filter-btn" class="add-filter-btn" onclick="toggleAddFilterPicker()" title="Add a filter configured in the liveboard. Only columns with filter tiles in ThoughtSpot will work.">+ Add Filter</button>
+        <div id="add-filter-picker" class="add-filter-picker" style="display:none;"></div>
+      </div>
+      <button class="filter-clear-btn" onclick="clearCustomFilters()">Clear All</button>
     </div>
 
     <!-- Embed area -->
@@ -442,25 +468,53 @@
           <option value="OIDCRedirect">OIDC</option>
         </select>
       </div>
+      <div class="cp-field">
+        <label class="cp-label">Bearer Token (Optional)</label>
+        <div class="cp-token-row">
+          <input class="cp-input" id="cfg-token" type="password" autocomplete="off"
+                 placeholder="Paste your ThoughtSpot bearer token" spellcheck="false">
+          <button class="cp-discover-btn" onclick="runDiscover()">Discover</button>
+        </div>
+        <label class="cp-check-label">
+          <input type="checkbox" id="cfg-token-persist"> Remember for this session
+        </label>
+        <div class="cp-hint" id="discover-status" style="display:none"></div>
+      </div>
     </div>
 
     <div class="cp-group">
       <div class="cp-group-title">Data Objects</div>
-      <div class="cp-org-warning">⚠ GUIDs are org-specific. If you switch orgs in ThoughtSpot, update all three values below.</div>
+      <div class="cp-hint">Use the bearer token above to discover your org's worksheets, liveboards, and answers.</div>
       <div class="cp-field">
-        <label class="cp-label">Worksheet / Model GUID</label>
-        <input class="cp-input" id="cfg-worksheet" type="text" placeholder="Used by Search + Spotter">
+        <label class="cp-label">Worksheet / Model</label>
+        <input class="cp-input" id="cfg-worksheet" type="text" placeholder="Enter GUID or discover via token">
+        <select class="cp-select" id="cfg-worksheet-sel" style="display:none" onchange="onWorksheetSelect(this.value)">
+          <option value="">Select a worksheet...</option>
+        </select>
         <div class="cp-hint">Used by: Search Data, Spotter AI, NL Search</div>
       </div>
       <div class="cp-field">
-        <label class="cp-label">Liveboard GUID</label>
-        <input class="cp-input" id="cfg-liveboard" type="text" placeholder="Liveboard GUID">
+        <label class="cp-label">Liveboard</label>
+        <input class="cp-input" id="cfg-liveboard" type="text" placeholder="Enter GUID or discover via token">
+        <select class="cp-select" id="cfg-liveboard-sel" style="display:none" onchange="onLiveboardSelect(this.value)">
+          <option value="">Select a liveboard...</option>
+        </select>
         <div class="cp-hint">Used by: Liveboard, Visualization</div>
       </div>
       <div class="cp-field">
-        <label class="cp-label">Visualization GUID</label>
-        <input class="cp-input" id="cfg-viz" type="text" placeholder="Viz GUID (from the Liveboard above)">
+        <label class="cp-label">Visualization</label>
+        <input class="cp-input" id="cfg-viz" type="text" placeholder="Enter GUID or discover via token">
+        <select class="cp-select" id="cfg-viz-sel" style="display:none" onchange="onVizSelect(this.value)">
+          <option value="">Select a visualization...</option>
+        </select>
         <div class="cp-hint">Used by: Visualization</div>
+      </div>
+      <div class="cp-field" id="cfg-answer-field" style="display:none">
+        <label class="cp-label">Standalone Answer</label>
+        <select class="cp-select" id="cfg-answer-sel" onchange="onAnswerSelect(this.value)">
+          <option value="">Select an answer...</option>
+        </select>
+        <div class="cp-hint">Optional. Sets worksheet and visualization IDs to the answer's IDs.</div>
       </div>
     </div>
 
