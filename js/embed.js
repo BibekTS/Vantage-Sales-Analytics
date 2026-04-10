@@ -115,17 +115,31 @@ export function doRender(section, config, callbacks, options = {}) {
       break;
 
     case 'viz':
-      embed = new LiveboardEmbed('#ts-embed-container', {
-        frameParams: {},
-        liveboardV2: true,
-        liveboardId: config.liveboardId,
-        vizId: config.vizId,
-        hiddenActions,
-        disabledActions,
-        customActions,
-        ...(rtParams && { runtimeParameters: rtParams }),
-        ...flags,
-      });
+      if (config.answerId) {
+        // Standalone saved answer — render without liveboardId
+        embed = new LiveboardEmbed('#ts-embed-container', {
+          frameParams: {},
+          liveboardV2: true,
+          vizId: config.answerId,
+          hiddenActions,
+          disabledActions,
+          customActions,
+          ...(rtParams && { runtimeParameters: rtParams }),
+          ...flags,
+        });
+      } else {
+        embed = new LiveboardEmbed('#ts-embed-container', {
+          frameParams: {},
+          liveboardV2: true,
+          liveboardId: config.liveboardId,
+          vizId: config.vizId,
+          hiddenActions,
+          disabledActions,
+          customActions,
+          ...(rtParams && { runtimeParameters: rtParams }),
+          ...flags,
+        });
+      }
       break;
 
     case 'fullapp': {

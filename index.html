@@ -484,6 +484,7 @@
       <input type="hidden" id="cfg-worksheet">
       <input type="hidden" id="cfg-liveboard">
       <input type="hidden" id="cfg-viz">
+      <input type="hidden" id="cfg-answer">
       <div class="cp-field">
         <label class="cp-label">Worksheet / Model</label>
         <select class="cp-select" id="cfg-worksheet-sel" disabled onchange="onWorksheetSelect(this.value)">
@@ -510,7 +511,7 @@
         <select class="cp-select" id="cfg-answer-sel" onchange="onAnswerSelect(this.value)">
           <option value="">Select an answer...</option>
         </select>
-        <div class="cp-hint">Optional. Sets worksheet and visualization IDs to the answer's IDs.</div>
+        <div class="cp-hint">Optional. Renders this answer in the Visualization tab instead of the liveboard viz. Select a Worksheet above first.</div>
       </div>
     </div>
 

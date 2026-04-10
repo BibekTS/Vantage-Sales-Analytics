@@ -11,10 +11,11 @@ window.TS_CONFIG = {
   worksheetId: '04d7c86c-cac6-410d-ac7d-9698bda8b21b', // Used by Search + Spotter
   liveboardId: '47074597-d3fa-4dd1-944b-258254353a04', // Used by Liveboard + Visualization
   vizId:       '429e43c4-7368-4959-9a60-4ecbea225bcd', // Used by Visualization (paired with liveboardId)
+  answerId:    '', // Used by Visualization when a Standalone Answer is selected
 
   // ── Search Defaults ───────────────────────────────────────────────────────
-  searchTokenString: '[Sales Amount] [Region]',   // Optional: pre-populate the search bar e.g. '[Sales Amount] [Region]'
-  executeSearch: true,    // If true, auto-runs the searchTokenString on load
+  searchTokenString: '',   // Optional: pre-populate the search bar e.g. '[Sales Amount] [Region]'
+  executeSearch: false,    // If true, auto-runs the searchTokenString on load
 
   // ── Custom Filters ────────────────────────────────────────────────────────
   filterColumns: ['Territory'],  // Backend will fetch distinct values from the liveboard
