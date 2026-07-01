@@ -36,6 +36,7 @@
  *   POST /api/writeback      — sink for the write-back custom action (stub; TS_ALLOW_DEV_PROXY)
  *   POST /api/filter-values  — filter-value discovery using the CALLER'S bearer token (no minting)
  *   (static) /js /css /vendor /config.js /  — the frontend only
+ *   GET  /docs/tse-best-practices.html — the TSE best-practices compendium (single file, not the docs dir)
  */
 
 require('dotenv').config();
@@ -402,6 +403,10 @@ app.use('/css', express.static(path.join(__dirname, 'css'), staticOpts));
 app.use('/vendor', express.static(path.join(__dirname, 'vendor'), staticOpts)); // self-hosted SDK (see scripts/vendor-sdk.mjs)
 app.get('/config.js', (_req, res) => res.sendFile(path.join(__dirname, 'config.js')));
 app.get(['/', '/index.html'], (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+// The shareable best-practices compendium — served as ONE explicit file, keeping the rest of
+// docs/ (internal notes) off the wire.
+app.get('/docs/tse-best-practices.html', (_req, res) =>
+  res.sendFile(path.join(__dirname, 'docs', 'tse-best-practices.html')));
 
 // Bind to localhost only. Even with the guards above, keep the dev server off the LAN; front it
 // with a reverse proxy (and real auth) before exposing it anywhere.

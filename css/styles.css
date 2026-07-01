@@ -136,6 +136,7 @@ button { font-family: inherit; cursor: pointer; }
   transition: border-color .18s, color .18s;
 }
 .tb-icon-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
+a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none; }
 .tb-icon-btn.on { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
 .tb-reset:hover { color: var(--danger); border-color: #ebcccc; }
 
