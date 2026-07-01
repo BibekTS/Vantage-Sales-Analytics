@@ -1,3 +1,8 @@
+> ⚠️ **Superseded (2026-06-03).** The app was redesigned from the fictional "Vantage Sales"
+> marketing shell into a tool-first **ThoughtSpot Embed Playground**. See `README.md` for the
+> current architecture and run steps. The original app is preserved under `legacy/`. The notes
+> below document the *old* build and remain useful for SDK lessons, but no longer describe the UI.
+
 # Vantage Sales — ThoughtSpot Embed Playground
 ## Build Instructions, Lessons Learned & AI Prompt
 

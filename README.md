@@ -1,351 +1,232 @@
-# Vantage Sales — ThoughtSpot Embed Playground
+# ThoughtSpot Embed Playground
 
-A demo shell for showcasing ThoughtSpot Visual Embed SDK features to clients. Looks like a real B2B sales product. Zero build tools — just open and run.
+A small, shareable tool for testing the **ThoughtSpot Visual Embed SDK**. Point it at any instance,
+pick an embed type, tweak the options, and copy the runnable SDK code. No build step, no framework.
 
----
-
-## Quick Start
-
-1. Install the **Live Server** extension in VS Code
-2. Open this `Project/` folder in VS Code
-3. Click **Go Live** in the status bar → opens `http://localhost:5500`
-4. In a separate tab, log into your ThoughtSpot instance
-5. Return to `localhost:5500` — embeds render using your active browser session
-
-> **Must use Live Server (not file://).** ThoughtSpot's CORS whitelist only allows
-> requests from `localhost` origins. Opening `index.html` directly from the filesystem
-> will silently block all SDK calls.
+> **One job:** connect → pick an embed → tweak → copy the code. Every setup is a shareable link.
 
 ---
 
-## Architecture
+## Quick start (≈30 seconds)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Browser (localhost:5500)                      │
-│                                                                      │
-│  ┌──────────────┐   Explore Analytics   ┌────────────────────────┐  │
-│  │ Landing Page │ ────────────────────► │   Analytics Workspace  │  │
-│  │  (index.html)│ ◄──────────────────── │                        │  │
-│  └──────────────┘     Back to Home      │  ┌──────────────────┐  │  │
-│                                         │  │   Left Sidebar   │  │  │
-│                                         │  │  ┌────────────┐  │  │  │
-│  config.js                              │  │  │  nav item  │──┼──┼─►│ switchSection()
-│  window.TS_CONFIG ──────────────────────┼──┼─►│  + ⚙ gear  │  │  │  │
-│  (host, GUIDs,                          │  │  └────────────┘  │  │  │
-│   authType…)                            │  │  × 5 sections    │  │  │
-│       │                                 │  │                  │  │  │
-│       │ on DOMContentLoaded             │  │  [Advanced]──────┼──┼─►│ feature panel
-│       ▼                                 │  │  [Back to Home]  │  │  │
-│  ┌─────────────┐                        │  └──────────────────┘  │  │
-│  │   app.js    │                        │                        │  │
-│  │             │  initSDK(TS_CONFIG)    │  ┌──────────────────┐  │  │
-│  │  currentSection                      │  │   Embed Area     │  │  │
-│  │  embedOptions ──────────────────────►│  │  #ts-embed-      │  │  │
-│  │  sectionOpts  │                      │  │  container       │  │  │
-│  │             │  doRender(section,…)   │  │  (iframe)        │  │  │
-│  │             │ ──────────────────────►│  └──────────────────┘  │  │
-│  └──────┬──────┘                        │                        │  │
-│         │                               │  ┌──────────────────┐  │  │
-│         ▼                               │  │  Bottom Panel    │  │  │
-│  ┌─────────────┐                        │  │  Event Log       │  │  │
-│  │  embed.js   │   SDK events           │  │  Embed Code      │  │  │
-│  │             │ ◄──────────────────────┼──┼─ (delta only)    │  │  │
-│  │  initSDK()  │                        │  │  Reset All       │  │  │
-│  │  doRender() │                        │  └──────────────────┘  │  │
-│  └──────┬──────┘                        └────────────────────────┘  │
-│         │                                                            │
-│         │ Visual Embed SDK (CDN)                                     │
-│         ▼                                                            │
-│  ┌─────────────────────────────────────┐                            │
-│  │        ThoughtSpot Instance         │                            │
-│  │  SearchEmbed / SpotterEmbed /        │                            │
-│  │  LiveboardEmbed / AppEmbed          │                            │
-│  └─────────────────────────────────────┘                            │
-└─────────────────────────────────────────────────────────────────────┘
+You need **Node 18+** and a ThoughtSpot instance you can log into.
+
+```bash
+npm install
+npm start
 ```
 
-### Data Flow
+Open **http://localhost:3000**, paste your instance URL in the top bar, and click **Connect**.
+That's it — no `.env`, no keys. This uses **browser-session auth**: keep a tab logged into your
+ThoughtSpot open in the same browser and the playground rides that session.
 
-```
-User clicks nav item
-        │
-        ▼
-  switchSection(section)
-        │
-        ├─► updates sidebar active state
-        ├─► sets currentSection
-        └─► renderEmbedNow(section)
-                  │
-                  ├─► destroys previous embed instance
-                  ├─► shows loading overlay
-                  ├─► merges embedOptions + sectionOpts[section]
-                  └─► doRender(section, TS_CONFIG, callbacks, options)
-                              │
-                              ├─► new SearchEmbed / SpotterEmbed /
-                              │   LiveboardEmbed / AppEmbed
-                              ├─► .on(EmbedEvent.*) → logEvent()
-                              └─► .render() → ThoughtSpot iframe
+> **One-time CORS step:** for the object pickers to load, add `http://localhost:3000` to your
+> instance's CORS allowlist (**Develop → Customizations → Security Settings → CORS**). The embed
+> itself renders even without this — only the REST-driven dropdowns need it.
 
-
-User applies Advanced option (e.g. Runtime Filter)
-        │
-        ▼
-  embedOptions updated
-        │
-        └─► renderEmbedNow(currentSection)  ← re-render with new options
-              OR
-        └─► embed.trigger(HostEvent.UpdateRuntimeFilters)  ← live, no re-render
-
-
-User clicks Reset All
-        │
-        ├─► embedOptions cleared
-        ├─► sectionOpts cleared
-        ├─► TS_CONFIG restored from _TS_CONFIG_DEFAULT snapshot
-        ├─► Configure panel fields synced
-        └─► initSDK() + renderEmbedNow()
-```
+Then:
+1. Pick an embed from the left rail.
+2. Choose a data object in the inspector's **Data object** section.
+3. Tweak options on the right; watch the **SDK Code** tab at the bottom build itself; click **Copy**.
 
 ---
 
-## File Overview
+## Trusted Auth (optional)
 
+Want to test trusted-auth tokens, groups, JIT, and RLS claims? Four steps:
+
+```bash
+# 1. In ThoughtSpot (admin): Develop → Customizations → Security Settings → Trusted authentication
+#    → enable it and copy the secret key.
+
+# 2. Create and edit .env:
+npm run setup                 # creates .env (won't overwrite an existing one)
+#    set THOUGHTSPOT_HOST, TS_SECRET_KEY, and TS_DEFAULT_USERNAME (your TS username)
+
+# 3. Verify it works BEFORE opening the browser — this mints a real test token:
+npm run doctor
+
+# 4. Start (restart if it was already running — .env is read at boot):
+npm start
 ```
-Project/
-├── index.html          All markup. No inline CSS or JS.
-├── config.js           Your ThoughtSpot connection + GUIDs. Edit this first.
-├── css/
-│   └── styles.css      Design system: variables, landing page, analytics app,
-│                       sidebar panels, bottom panel, advanced features.
-└── js/
-    ├── embed.js        Thin SDK wrapper. Exports initSDK() and doRender().
-    ├── app.js          Everything else: state, navigation, advanced panel logic,
-    │                   event log, embed code view, reset.
-    └── auth.js         Auth session check utility (kept for reference, not
-                        used in the main render flow).
-```
+
+`npm run doctor` checks your `.env`, confirms the instance is reachable, and mints a short-lived
+token for the default user — so you get a clear ✓ or the exact upstream error (bad secret, unknown
+user, …) instead of debugging it through the UI.
+
+Then switch the top-bar auth selector to **Trusted token** and click **Token claims…**. The Node
+server holds the `secret_key` and mints short-lived tokens — **the secret never reaches the browser.**
+The live inspector shows the redacted request, the raw token, decoded JWT claims, an expiry
+countdown, and every `getAuthToken` call (including silent `autoLogin` refreshes). **Mint & apply**
+switches the embed to `AuthType.TrustedAuthTokenCookieless` using your claims.
+
+Pick a **token type** in the claims panel — it selects the mint endpoint and the ABAC surface:
+
+- **full** → `auth/token/full` (default, plain trusted auth):
+  - **Identity & JIT** — `username`, `auto_create`, `display_name`, `email`, `org_id`, validity
+  - **Groups** (`group_identifiers[]`) — group-keyed RLS/ABAC (the durable path)
+  - **ABAC / RLS** (`user_parameters`) — `runtime_filters[]`, `runtime_sorts[]`, `parameters[]`
+    *(deprecated in TS 10.4.0.cl+; surfaced for testing)*
+- **custom** → `auth/token/custom` (ABAC via RLS — the forward track):
+  - **`variable_values[]`** — `{ name, values }` where `name` is a formula variable referenced in an
+    RLS rule via `ts_var(name)`. The modern replacement for `user_parameters`.
+  - **`persist_option`** — *required* on this endpoint. Defaults to `REPLACE` (each mint is
+    authoritative). The API default is `APPEND`, which silently **accumulates** entitlements across
+    mints — `NONE`/`RESET` are rejected when `variable_values` are present.
+  - **`objects[]`** — optional `LOGICAL_TABLE` identifiers to scope the values to specific models.
+
+> A ThoughtSpot cluster runs **one** token workflow at a time (`full` *or* `custom`), not both in
+> parallel — the picker mirrors that choice per mint so you can test either.
+
+> **Runtime filters are not a security boundary.** They become editable URL params; the inspector and
+> generated code flag this. For tenant isolation or per-user data, enforce it server-side with RLS/ABAC
+> (a `custom` token + `variable_values`).
+
+### `.env` settings
+
+| Key | What it is | Default |
+|---|---|---|
+| `THOUGHTSPOT_HOST` | Full instance URL | — |
+| `TS_SECRET_KEY` | Trusted-auth secret (Develop → Customizations → Security Settings). **Never commit.** | — |
+| `TS_DEFAULT_USERNAME` | User minted for when the UI leaves the field blank | `tsadmin` |
+| `TS_USERNAME_ALLOWLIST` | Comma-separated usernames the server may mint for | = default user |
+| `TS_DEFAULT_ORG_ID` | Optional Org id | — |
+| `PORT` | Server + static port | `3000` |
+| `TS_ALLOW_JIT` | Allow `auto_create` (JIT). Off blocks provisioning new users that bypass the allowlist | `false` |
+| `TS_GROUP_ALLOWLIST` | Groups the browser may request via `group_identifiers`. Empty = none; `*` = any | empty |
+| `TS_ALLOW_DEV_PROXY` | Enable the `/api/writeback` stub sink | `false` |
+
+> **Heads-up:** the guards are **fail-closed**. To exercise the full claims playground (arbitrary
+> groups + JIT), set `TS_ALLOW_JIT=true` and `TS_GROUP_ALLOWLIST=*` in `.env`. See
+> [Security model](#security-model) for why these default off.
 
 ---
 
-## Configuring for a New Client
+## Sharing
 
-Open `config.js` and update these values:
+Everything you configure (host, embed, object GUIDs, every applied option, auth claims) is encoded
+into the **URL hash** and saved to `localStorage`. Click **Share** to copy a link that reproduces
+your exact setup on someone else's machine. **Secrets are never serialized** — no token or
+`secret_key` is ever in the link. Links are sanitized on load, and a host that arrives via a shared
+link asks for an explicit **Connect** click before the app touches it.
 
-```js
-window.TS_CONFIG = {
-  thoughtSpotHost:   'https://your-instance.thoughtspot.cloud',
-  authType:          'None',
+---
 
-  worksheetId:       'GUID',   // Used by Search + Spotter
-  liveboardId:       'GUID',   // Used by Liveboard + Visualization
-  vizId:             'GUID',   // Used by Visualization (paired with liveboardId)
+## Embed types
 
-  searchTokenString: '[Sales Amount] [Region]',  // pre-fills the search bar
-  executeSearch:     true,
-};
-```
+| Rail item | SDK class | Needs |
+|---|---|---|
+| Search Data | `SearchEmbed` | Worksheet/Model |
+| NL Search Bar | `SearchBarEmbed` | Worksheet/Model |
+| Spotter AI | `SpotterEmbed` | Worksheet/Model |
+| Liveboard | `LiveboardEmbed` | Liveboard |
+| Custom Liveboard | `LiveboardEmbed` + website-native filter bar | Liveboard |
+| AI Highlights | `LiveboardEmbed` + `HostEvent.AIHighlights` (auto-fired on render) | Liveboard |
+| Single Viz | `LiveboardEmbed` (+`vizId`) | Liveboard + Viz, or a standalone Answer |
+| Full App | `AppEmbed` | — |
+| AI Insights (REST) | Spotter REST (`/ai/relevant-questions/` + `/ai/answer/create` + `/searchdata`) — auto-generates insights with inline data tables, no iframe | Worksheet/Model |
 
-**Finding GUIDs in ThoughtSpot:**
-| Object | Where to find the GUID |
+**The inspector** is contextual to the active embed — only relevant sections show: Data object ·
+Display options · Modify actions · Runtime filters (live) · Runtime parameters · Custom actions ·
+Host events · Custom styles.
+
+**The bottom panel** has four tabs: **Event Log**, **SDK Code** (a runnable snippet that updates as
+you tweak), **SDK Lifecycle** (the host ↔ iframe ↔ server handshake, live), and **APIs Used** (the
+REST + SDK calls this setup touches, lighting up as they fire).
+
+---
+
+## Custom actions
+
+Custom actions add buttons to an embed's menu or context menu. The inspector's **Custom actions**
+section builds them and mirrors each one into the **SDK Code** tab. Pick a **type** per action:
+
+| Type | What fires | What the host does |
+|---|---|---|
+| **Callback** | `EmbedEvent.CustomAction` with the row payload | Runs your own code in the host — no navigation |
+| **URL** | Opens a URL with the selected row data appended | Hands off to another app with context |
+| **Write-back** | `POST /api/writeback` (dev-proxy stub) | Round-trips a value to a system of record |
+| **Drill-down** | Re-renders at a detail Liveboard | Navigates to a focused board, filters carried over |
+
+Two host-side patterns ship wired up, each with a full write-up in [`docs/`](docs/):
+
+- **Download PDF (Callback)** — a `Callback` action pulls the rows behind a visualization via its
+  `answerService` and builds a paginated PDF **client-side** (regional sales statements, one per
+  page). No server round-trip; ThoughtSpot never sees the document. The handler lives in
+  [js/invoice-pdf.js](js/invoice-pdf.js); the how-and-why is in
+  [docs/callback-action.md](docs/callback-action.md).
+- **Customize Export (REST Report API)** — a menu action opens *your own* dialog (format, page
+  layout, orientation, include/exclude toggles, footer text) and exports the Liveboard through
+  `POST /api/rest/2.0/report/liveboard` with the **current active filters baked in** — bypassing
+  ThoughtSpot's native Download modal so you control every option (and which ones the user sees).
+  See [docs/customize-export.md](docs/customize-export.md).
+
+---
+
+## Commands
+
+| Command | What it does |
 |---|---|
-| Liveboard | URL bar: `.../#/pinboard/<liveboardId>` |
-| Visualization | URL bar: `.../#/pinboard/<liveboardId>/viz/<vizId>` |
-| Worksheet | Data tab → open worksheet → URL bar |
-
-You can also update these values at runtime via the **⚙ Configure** button inside the app — no file edit needed.
-
----
-
-## The App — Two Modes
-
-### Landing Page
-Shows a fictional "Vantage Sales" product site with animated KPI counters,
-product category bars, and regional performance cards. Click **Explore Analytics**
-to enter the embed workspace.
-
-### Analytics Workspace
-Left sidebar with five embed sections:
-
-| Section | SDK Class | What it needs |
-|---|---|---|
-| Search Data | `SearchEmbed` | `worksheetId` |
-| Spotter AI | `SpotterEmbed` | `worksheetId` |
-| Liveboard | `LiveboardEmbed` | `liveboardId` |
-| Visualization | `LiveboardEmbed` | `liveboardId` + `vizId` |
-| Full App | `AppEmbed` | (no GUID needed) |
-
-Click any section to render that embed. Click again to switch (previous embed is destroyed first).
-
-Each sidebar item also has a **⚙ gear icon** for per-embed options. Clicking the gear icon on a section you're not currently viewing **automatically switches to that section** before opening the options panel.
+| `npm start` | Run the server + frontend on `http://localhost:3000` |
+| `npm run dev` | Same, with auto-restart on file changes |
+| `npm run setup` | Create `.env` from the template (Trusted Auth) |
+| `npm run doctor` | Verify Trusted Auth: check `.env`, reach the instance, mint a test token |
+| `npm test` | Boot the server and assert the security guards + static restrictions |
+| `npm run vendor-sdk` | Download a pinned copy of the SDK into `vendor/` to self-host it |
 
 ---
 
-## Advanced Panel
+## Security model
 
-Click **Advanced** in the sidebar to open a slide-out panel with seven feature tabs.
-All features apply to whichever embed section is currently active.
+`TS_SECRET_KEY` lives only on the server, and the guards are **fail-closed**:
 
-### Runtime Filters
-- Add filter rows: column name · operator · value
-- Operators: EQ, NE, LT, LE, GT, GE, IN
-- Click **Apply Filters** → takes effect **immediately** via `HostEvent.UpdateRuntimeFilters`
-- No re-render required
-- Works best on: Liveboard, Visualization, Full App
+- The username **allowlist** blocks impersonating arbitrary *existing* users.
+- **JIT (`auto_create`) is refused** unless `TS_ALLOW_JIT=true` — otherwise it side-steps the
+  allowlist by provisioning a brand-new user.
+- **`group_identifiers` are refused** unless each group is in `TS_GROUP_ALLOWLIST` (or it's `*`) —
+  otherwise the browser could mint a token into a privileged group.
+- **`/api/filter-values` forwards the caller's own token** and never mints one, so it can't be an
+  unauthenticated data-exfiltration proxy.
+- **Static serving** is restricted to the frontend assets (never source, `.env`, docs, or bundles).
+- **Shared links** are sanitized (unknown keys dropped, types coerced, prototype-pollution blocked),
+  and a hash-supplied host requires explicit confirmation before any request is made to it.
 
-### Runtime Parameters
-- Add parameter rows: name · value
-- Parameters map to ThoughtSpot formula-level variables defined in the worksheet
-- Click **Apply — Re-render** → embed re-renders with `runtimeParameters: [...]`
-- Works on: Search, Liveboard, Visualization
-
-### Modify Actions
-- Checkboxes to **Hide** or **Disable** individual SDK actions
-- Actions include: Download, Share, Edit, Pin, Explore, Drill Down, etc.
-- Click **Apply — Reload Embed** → re-renders with `hiddenActions` / `disabledActions`
-
-### Custom Actions
-- Add a button label + position (START or END of menu)
-- Adds `customActions: [{ id, label, position }]` to the embed config
-- When clicked inside ThoughtSpot, fires `EmbedEvent.CustomAction`
-- Payload (row data, context) is captured and displayed in the panel
-- Requires re-render; works on: Liveboard, Visualization, Full App
-
-### Code-Based Actions
-- Define a custom action entirely in code (no ThoughtSpot admin setup required)
-- Same mechanic as Custom Actions but injected via the SDK
-- Live code preview updates as you type
-- Requires re-render
-
-### Host Events
-- Send real-time commands to the active embed without re-rendering
-
-| Event | Target embed | What it does |
-|---|---|---|
-| Search Query | Search Data | Sets the search bar content |
-| Navigate to Path | Full App | Navigates to a ThoughtSpot page/GUID |
-| Show Only These Vizs | Liveboard · Viz | Filters visible visualizations |
-| Reload | All | Reloads the embed iframe |
-
-### Custom Styles
-
-**Parse Element** (fastest way to find a selector):
-1. In ThoughtSpot, right-click any element → **Inspect**
-2. In DevTools, right-click the highlighted HTML node → **Copy → Copy element**
-3. Paste the HTML into the **Parse Element** textarea and click **→ Extract Selector**
-4. A CSS rule row is added automatically with `display: none !important` pre-filled
-5. Selector priority: `data-testid` → `aria-label` → `id` → first class
-
-- **CSS Rules (rows)**: Add selector + CSS declaration pairs
-  - Selector: `[data-testid="share-button"]`
-  - CSS: `display: none !important`
-  - Selectors with double quotes (e.g. attribute selectors) are handled correctly
-- **Code Block**: Write JS-style `rules_UNSTABLE` directly:
-  ```
-  '[data-testid="share-button"]': {
-    display: 'none !important',
-  },
-  ```
-- **↺ Sync**: imports the code block into the row builder
-- **Apply — Reload Embed**: re-inits the SDK with `customizations.style.customCSS.rules_UNSTABLE`
-  then re-renders
-- A **sample code block** below the textarea shows common selectors (selectable, copyable)
-
-> **Tip for finding selectors:** Open the embed in a separate tab, right-click any element
-> in the ThoughtSpot UI → Inspect. Look for `data-testid` attributes — these are more stable
-> across ThoughtSpot versions than class names.
+`npm test` asserts these stay closed. A real deployment must still derive the username from a
+verified server-side session (SSO/cookie), never from the request body. The Visual Embed SDK loads
+from a pinned unpkg URL by default; run `npm run vendor-sdk` to self-host it from `/vendor`.
 
 ---
 
-## Layout Behavior
+## Troubleshooting
 
-### Feature Panel (Advanced)
-The right-side Advanced panel **pushes the embed area** when it opens. The embed container
-shrinks to make room; the panel does not overlap it. The same happens in reverse when the
-panel is closed — the embed area smoothly expands back.
-
-### Bottom Panel
-The bottom panel (Event Log / Embed Code) is **fixed to the bottom of the viewport** and
-overlays the embed rather than pushing it up. The embed area reserves padding equal to the
-collapsed bar height so content is never obscured when the panel is collapsed.
-
----
-
-## Bottom Panel (Event Log + Embed Code)
-
-Tabbed panel pinned to the bottom of the viewport. Click the chevron **▲** to expand.
-
-### Event Log tab
-- Logs every SDK event in real time: timestamp · event type · data
-- Events: `AuthInit`, `EmbedListenerReady`, `Load`, `LiveboardRendered`,
-  `NoCookieAccess`, `Error`, `Data`, `CustomAction`
-- Newest events appear at the top
-
-### Embed Code tab
-- Shows **only what changed** from the default SDK configuration
-- Updates live as you apply advanced options
-- Syntax-highlighted (enums in indigo, strings in green, keywords in pink)
-- **Copy** button copies the code to clipboard
-
-### Reset All button
-- Always visible (amber color) in the top-right of the panel
-- Clears all advanced options (filters, params, actions, custom styles)
-- **Also restores TS_CONFIG** (host, GUIDs, auth) back to the original `config.js` values and syncs the Configure panel fields
-- Re-inits the SDK and re-renders the current embed
-- Also appears on the **Connection Error** screen next to Retry, so you can recover from a bad config without opening the Configure panel
+| Symptom | Fix |
+|---|---|
+| Status says **CORS blocked** | Add `http://localhost:3000` to the instance's CORS allowlist (Develop → Customizations → Security Settings). The embed still renders; only the REST pickers need it. |
+| **Log in to ThoughtSpot first** | Browser-session auth needs an active login. Open your instance, sign in, then click *retry*. |
+| Token mint returns **503** | `TS_SECRET_KEY` isn't set. Run `npm run setup`, fill in `.env`, then `npm run doctor`. |
+| Trusted Auth won't mint | Run `npm run doctor` — it pinpoints a bad secret, unknown user, or unreachable host. |
+| Minting **403s** for your user | The user isn't allowed. Set `TS_DEFAULT_USERNAME` to your username and leave `TS_USERNAME_ALLOWLIST` blank. |
+| JIT / group minting returns **403** | Fail-closed by design. Set `TS_ALLOW_JIT=true` and/or `TS_GROUP_ALLOWLIST=…` in `.env`. |
+| Edited `.env` but nothing changed | `.env` is read at boot — restart `npm start`. |
+| `file://` doesn't work | Serve it — `npm start` (or VS Code Live Server → `http://localhost:5500`). |
 
 ---
 
-## How the Code Is Organized
+## Files
 
-### `embed.js`
-Knows only about the ThoughtSpot SDK. Exports:
-- `initSDK(config)` — calls `init()` with host, authType, and optional customizations
-- `doRender(section, config, callbacks, options)` — creates the right embed class,
-  registers all SDK events, calls `.render()`, returns the embed instance
-- Re-exports: `HostEvent`, `Action`, `RuntimeFilterOp`, `CustomActionsPosition`
-
-### `app.js`
-The main controller. Key concepts:
-- **`currentSection`** — which embed is active (`'search'` | `'spotter'` | etc.)
-- **`embedOptions`** — accumulates all advanced settings across panel interactions
-- **`renderEmbedNow(section)`** — always sets `currentSection`, destroys old embed,
-  shows loading state, calls `doRender`, hides loading when SDK events fire
-- All advanced "Apply" functions call `renderEmbedNow(currentSection)` directly
-- **`refreshCodeView()`** — regenerates and syntax-highlights the embed code delta
-- **`logEvent(type, data)`** — adds an entry to the event log
-
-### `styles.css`
-Single file, organized in sections:
-1. CSS variables (`:root`)
-2. Landing page (hero, KPI strip, feature grid)
-3. Analytics app shell (sidebar, header, embed area)
-4. Loading overlay states
-5. Bottom panel (tabs, log entries, code view)
-6. Config panel + feature panel (slide-out)
-7. Advanced panel sub-sections (filters, actions, custom styles)
-
----
-
-## Known Behaviors
-
-**AuthType.None requires an active session.** The user must be logged into the ThoughtSpot
-instance in the same browser. The embed uses that browser session cookie — no token
-exchange happens in this app.
-
-**Re-render vs live updates.** Most advanced options require a full embed re-render
-(the iframe reloads). Runtime filters are the exception — they apply live via a host event.
-
-**CSS rules are `rules_UNSTABLE`.** The `rules_UNSTABLE` key in ThoughtSpot's SDK is
-intentionally marked unstable — selectors may change between ThoughtSpot versions.
-Use data-testid selectors where possible as they are more stable than class names.
-
-**Custom Actions need ThoughtSpot admin setup** for the "Custom Actions" panel.
-The "Code-Based Actions" panel works without any ThoughtSpot admin configuration.
-
-**Switching sections destroys the embed.** Any runtime state (applied filters, search
-results) is lost when you switch to a different section. Advanced options in `embedOptions`
-persist and are re-applied on every new render.
-
-**`config.js` must load before `app.js`.** The `<script src="config.js">` tag appears
-before the `<script type="module" src="js/app.js">` tag. Do not reorder them.
+```
+index.html        Tool shell (top bar · rail · stage · inspector). JS-rendered panels.
+config.js         Optional seed defaults (you rarely touch this).
+css/styles.css    Design system + tool layout.
+js/
+  state.js        Single state object → URL-hash + localStorage + share link (sanitized on load).
+  discovery.js    REST discovery: org, worksheets, liveboards, vizzes, answers.
+  embed.js        Visual Embed SDK wrapper: initSDK() + doRender().
+  auth.js         Trusted-auth token-claims playground + live inspector.
+  invoice-pdf.js  Callback-action handler: viz rows → paginated, client-side PDF (sales statements).
+  app.js          Controller: connection, rail, render, inspector, SDK code, APIs panel, log.
+server.js         Token service (mints full-access tokens) + filter proxy + static host. Fail-closed.
+scripts/          setup.mjs · smoke-test.mjs (npm test) · vendor-sdk.mjs (self-host the SDK).
+docs/             Deep-dive guides: callback-action.md (host-code buttons) · customize-export.md (REST Report API export).
+misc/             Archived/unused material (old "Vantage Sales" app, repro bundles, snake game). Gitignored.
+```

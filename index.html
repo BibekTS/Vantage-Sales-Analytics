@@ -3,814 +3,183 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vantage Sales — Analytics Platform</title>
+  <title>ThoughtSpot Embed Playground</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
   <script src="config.js"></script>
 </head>
 <body>
 
-<!-- ════════════════════════════════════════════════════════════════════════
-     LANDING PAGE
-════════════════════════════════════════════════════════════════════════ -->
-<div id="landing">
+<div id="app">
 
-  <!-- Nav -->
-  <nav class="lnav">
-    <div class="lnav-logo">
-      <div class="logo-mark">◆</div>
-      Vantage Sales
-    </div>
-    <ul class="lnav-links">
-      <li><a href="#s-features">Platform</a></li>
-      <li><a href="#s-leaderboard">Performance</a></li>
-      <li><a href="#s-regions">Regions</a></li>
-    </ul>
-    <button class="btn-primary" onclick="enterAnalyticsMode()" style="padding:8px 18px;font-size:13px;">Explore Analytics</button>
-  </nav>
-
-  <!-- S1: Hero -->
-  <section class="s-hero" id="s-hero">
-    <div class="hero-bg-grid"></div>
-    <div class="hero-glow-l"></div>
-    <div class="hero-glow-r"></div>
-    <div class="hero-content">
-      <div class="hero-pill">
-        <span class="hero-pill-dot"></span>
-        FY2025 Sales Intelligence Platform
-      </div>
-      <h1>The Smarter Way<br>to <em>Hit Quota</em></h1>
-      <p>Real-time visibility across every deal, territory, and rep — powered by AI analytics embedded directly in your workflow.</p>
-      <div class="hero-counters">
-        <div class="hc-item">
-          <span class="hc-val" data-target="24.6" data-prefix="$" data-suffix="M">$0M</span>
-          <span class="hc-lbl">Total Sales YTD</span>
-        </div>
-        <div class="hc-div"></div>
-        <div class="hc-item">
-          <span class="hc-val" data-target="87" data-suffix="%">0%</span>
-          <span class="hc-lbl">Quota Attainment</span>
-        </div>
-        <div class="hc-div"></div>
-        <div class="hc-item">
-          <span class="hc-val" data-target="34.1" data-suffix="%">0%</span>
-          <span class="hc-lbl">Gross Margin</span>
-        </div>
-        <div class="hc-div"></div>
-        <div class="hc-item">
-          <span class="hc-val" data-target="11.3" data-suffix="d">0d</span>
-          <span class="hc-lbl">Avg Cycle Time</span>
-        </div>
-      </div>
-      <div class="hero-actions">
-        <button class="btn-primary" onclick="enterAnalyticsMode()">Explore Analytics →</button>
-        <button class="btn-ghost" onclick="openSnakeGame()">▶ Play</button>
-      </div>
-    </div>
-    <div class="scroll-hint">↓ scroll to explore</div>
-  </section>
-
-  <!-- S2: Feature cards -->
-  <section class="l-section" id="s-features">
-    <div class="l-inner">
-      <div class="l-eyebrow reveal">Platform</div>
-      <h2 class="l-h2 reveal">Your Numbers, Your Way</h2>
-      <p class="l-sub reveal">Give every rep, manager, and exec the exact view they need — without switching tools.</p>
-      <div class="feat3-grid">
-        <div class="feat3-card reveal" style="--delay:0ms">
-          <div class="f3-icon">📡</div>
-          <h3>Real-Time Visibility</h3>
-          <p>Track every deal from order placed to shipped — across all territories and product lines in one view.</p>
-        </div>
-        <div class="feat3-card reveal" style="--delay:120ms">
-          <div class="f3-icon">🤖</div>
-          <h3>AI-Powered Search</h3>
-          <p>Ask questions in plain English. Spotter surfaces answers instantly from your live sales data.</p>
-        </div>
-        <div class="feat3-card reveal" style="--delay:240ms">
-          <div class="f3-icon">🎯</div>
-          <h3>Quota Intelligence</h3>
-          <p>Identify who's on track, who needs coaching, and where to focus effort this quarter.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- S3: Leaderboard -->
-  <section class="l-section l-section--alt" id="s-leaderboard">
-    <div class="l-inner">
-      <div class="l-eyebrow reveal">Performance</div>
-      <h2 class="l-h2 reveal">Top Performers This Quarter</h2>
-      <p class="l-sub reveal">Live rankings across your sales team — updated with every closed deal.</p>
-      <div class="leaderboard reveal">
-        <div class="lb-header">
-          <span></span>
-          <span>Rep</span>
-          <span>Region</span>
-          <span>Sales</span>
-          <span>Quota Attainment</span>
-        </div>
-        <div class="lb-row" style="--bar:96%;--delay:0ms">
-          <span class="rep-rank">#1</span>
-          <span class="rep-name">Jordan Mitchell</span>
-          <span class="rep-region">North America</span>
-          <span class="rep-sales">$2.1M</span>
-          <div class="rep-bar-wrap"><div class="rep-bar"></div><span class="rep-pct">96%</span></div>
-        </div>
-        <div class="lb-row" style="--bar:91%;--delay:80ms">
-          <span class="rep-rank">#2</span>
-          <span class="rep-name">Priya Sharma</span>
-          <span class="rep-region">APAC</span>
-          <span class="rep-sales">$1.9M</span>
-          <div class="rep-bar-wrap"><div class="rep-bar"></div><span class="rep-pct">91%</span></div>
-        </div>
-        <div class="lb-row" style="--bar:88%;--delay:160ms">
-          <span class="rep-rank">#3</span>
-          <span class="rep-name">Marcus Chen</span>
-          <span class="rep-region">Europe</span>
-          <span class="rep-sales">$1.8M</span>
-          <div class="rep-bar-wrap"><div class="rep-bar"></div><span class="rep-pct">88%</span></div>
-        </div>
-        <div class="lb-row" style="--bar:82%;--delay:240ms">
-          <span class="rep-rank">#4</span>
-          <span class="rep-name">Sofia Rodriguez</span>
-          <span class="rep-region">LATAM</span>
-          <span class="rep-sales">$1.6M</span>
-          <div class="rep-bar-wrap"><div class="rep-bar"></div><span class="rep-pct">82%</span></div>
-        </div>
-        <div class="lb-row" style="--bar:79%;--delay:320ms">
-          <span class="rep-rank">#5</span>
-          <span class="rep-name">Alex Thompson</span>
-          <span class="rep-region">North America</span>
-          <span class="rep-sales">$1.5M</span>
-          <div class="rep-bar-wrap"><div class="rep-bar"></div><span class="rep-pct">79%</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- S4: Regions -->
-  <section class="l-section" id="s-regions">
-    <div class="l-inner">
-      <div class="l-eyebrow reveal">Coverage</div>
-      <h2 class="l-h2 reveal">Across Every Market</h2>
-      <p class="l-sub reveal">From North America to APAC — full performance visibility across all territories.</p>
-      <div class="reg4-grid">
-        <div class="reg4-card reveal" style="--delay:0ms;--bar:91%">
-          <div class="r4-top"><span class="r4-flag">🌎</span><span class="r4-name">North America</span></div>
-          <div class="r4-val">$11.2M</div>
-          <div class="r4-bar-wrap"><div class="r4-bar"></div></div>
-          <div class="r4-footer"><span class="r4-pct">91% of quota</span><span class="r4-delta up">↑ 8%</span></div>
-        </div>
-        <div class="reg4-card reveal" style="--delay:100ms;--bar:84%">
-          <div class="r4-top"><span class="r4-flag">🌍</span><span class="r4-name">Europe</span></div>
-          <div class="r4-val">$7.4M</div>
-          <div class="r4-bar-wrap"><div class="r4-bar"></div></div>
-          <div class="r4-footer"><span class="r4-pct">84% of quota</span><span class="r4-delta up">↑ 5%</span></div>
-        </div>
-        <div class="reg4-card reveal" style="--delay:200ms;--bar:79%">
-          <div class="r4-top"><span class="r4-flag">🌏</span><span class="r4-name">Asia Pacific</span></div>
-          <div class="r4-val">$4.1M</div>
-          <div class="r4-bar-wrap"><div class="r4-bar"></div></div>
-          <div class="r4-footer"><span class="r4-pct">79% of quota</span><span class="r4-delta dn">↓ 2%</span></div>
-        </div>
-        <div class="reg4-card reveal" style="--delay:300ms;--bar:72%">
-          <div class="r4-top"><span class="r4-flag">🌎</span><span class="r4-name">LATAM</span></div>
-          <div class="r4-val">$1.9M</div>
-          <div class="r4-bar-wrap"><div class="r4-bar"></div></div>
-          <div class="r4-footer"><span class="r4-pct">72% of quota</span><span class="r4-delta up">↑ 12%</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- S5: CTA -->
-  <section class="s-cta">
-    <div class="scta-inner reveal">
-      <div class="scta-badge">⚡ Powered by ThoughtSpot Embedded Analytics</div>
-      <h2>See Your Data Come Alive</h2>
-      <p>Explore real-time liveboards, AI-powered search, and Spotter insights — all embedded in your product.</p>
-      <button class="btn-primary btn-large" onclick="enterAnalyticsMode()">Launch Analytics →</button>
-    </div>
-  </section>
-
-</div><!-- /#landing -->
-
-
-<!-- ════════════════════════════════════════════════════════════════════════
-     ANALYTICS APP
-════════════════════════════════════════════════════════════════════════ -->
-<div id="app" class="hidden">
-
-  <!-- File protocol warning banner (shown by app.js when opened via file://) -->
-  <div id="file-protocol-banner" style="display:none; position:fixed; top:0; left:0; right:0; z-index:500; background:#7c2d12; color:#fed7aa; padding:10px 20px; font-size:13px; font-weight:500; text-align:center; border-bottom: 1px solid #9a3412;">
-    ⚠ You are opening this file directly (file://). Embeds will not work. Use <strong>VS Code Live Server</strong> → click "Go Live" in status bar → opens at <strong>localhost:5500</strong>
-  </div>
-
-  <!-- Sidebar -->
-  <div id="sidebar">
-    <div class="sb-header">
-      <div class="sb-logo" onclick="exitAnalyticsMode()" style="cursor:pointer;" title="Back to Home">
-        <div class="sb-logo-mark">◆</div>
-        Vantage Sales
-      </div>
+  <!-- ── Top connection bar ───────────────────────────────────────────── -->
+  <header id="topbar">
+    <div class="tb-brand" title="ThoughtSpot Embed Playground">
+      <span class="tb-mark">◆</span>
+      <span class="tb-name">Embed Playground</span>
     </div>
 
-    <div class="sb-section-lbl">Analytics</div>
+    <div class="tb-connect">
+      <input id="host-input" class="tb-host" type="text" spellcheck="false" autocomplete="off"
+             placeholder="https://your-instance.thoughtspot.cloud">
+      <select id="auth-select" class="tb-auth" title="Authentication type">
+        <option value="None">Auth: Browser session</option>
+        <option value="TrustedAuthTokenCookieless">Auth: Trusted token</option>
+      </select>
+      <button id="connect-btn" class="tb-btn tb-btn-primary">Connect</button>
+      <button id="auth-config-btn" class="tb-btn" hidden title="Configure trusted-auth token claims">Token claims…</button>
+    </div>
 
-    <nav class="sb-nav">
-      <div class="nav-item" data-section="search" onclick="switchSection('search')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.2"/><line x1="10.2" y1="10.2" x2="14" y2="14"/></svg></div>
-        <span>Search Data</span>
-        <button class="ni-gear" onclick="openEmbedOpts('search',event)" title="SearchEmbed options">⚙<span class="ni-gear-badge" id="ngb-search"></span></button>
-      </div>
-      <div class="nav-item" data-section="spotter" onclick="switchSection('spotter')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5L9.5 6 14 7.5 9.5 9 8 13.5 6.5 9 2 7.5 6.5 6z"/></svg></div>
-        <span>Spotter AI</span>
-        <button class="ni-gear" onclick="openEmbedOpts('spotter',event)" title="SpotterEmbed options">⚙<span class="ni-gear-badge" id="ngb-spotter"></span></button>
-      </div>
-      <div class="nav-item" data-section="nlsearch" onclick="switchSection('nlsearch')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H2a.5.5 0 00-.5.5v7a.5.5 0 00.5.5h3.8L8 13l2.2-2.5H14a.5.5 0 00.5-.5V3a.5.5 0 00-.5-.5z"/></svg></div>
-        <span>NL Search</span>
-        <button class="ni-gear" onclick="openEmbedOpts('nlsearch',event)" title="SearchBarEmbed options">⚙<span class="ni-gear-badge" id="ngb-nlsearch"></span></button>
-      </div>
-      <!-- Liveboard group header -->
-      <div class="sb-group-hdr lb-group-hdr" onclick="toggleLiveboardGroup()">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="8" width="3.5" height="6" rx=".8"/><rect x="6.3" y="4.5" width="3.5" height="9.5" rx=".8"/><rect x="11.5" y="1.5" width="3.5" height="12.5" rx=".8"/></svg></div>
-        <span>Liveboard</span>
-        <span class="adv-chevron open" id="lb-chevron">›</span>
-      </div>
+    <div class="tb-right">
+      <span id="conn-status" class="tb-status" data-state="idle">Not connected</span>
+      <button id="share-btn" class="tb-icon-btn" title="Copy a shareable link to the current setup">Share</button>
+      <button id="reset-btn" class="tb-icon-btn tb-reset" title="Reset all applied options">Reset</button>
+    </div>
+  </header>
 
-      <!-- Liveboard sub-items (expanded by default) -->
-      <div class="lb-group" id="lb-group">
-        <div class="nav-item adv-item" data-section="liveboard" onclick="switchSection('liveboard')">
-          <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="2"/><line x1="4.5" y1="5.5" x2="11.5" y2="5.5"/><line x1="4.5" y1="8.5" x2="11.5" y2="8.5"/><line x1="4.5" y1="11.5" x2="8.5" y2="11.5"/></svg></div>
-          <span>Standard</span>
-          <button class="ni-gear" onclick="openEmbedOpts('liveboard',event)" title="LiveboardEmbed options">⚙<span class="ni-gear-badge" id="ngb-liveboard"></span></button>
-        </div>
-        <div class="nav-item adv-item" data-section="liveboard-custom" onclick="switchSection('liveboard-custom')">
-          <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12l-4.5 5.5v4.5l-3-1.5V8.5z"/></svg></div>
-          <span>Custom Filters</span>
-        </div>
-      </div>
-      <div class="nav-item" data-section="viz" onclick="switchSection('viz')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,13 5,7.5 9.5,10 14,3"/><circle cx="14" cy="3" r="1.8" fill="currentColor" stroke="none"/></svg></div>
-        <span>Visualization</span>
-        <button class="ni-gear" onclick="openEmbedOpts('viz',event)" title="LiveboardEmbed+vizId options">⚙<span class="ni-gear-badge" id="ngb-viz"></span></button>
-      </div>
-      <div class="nav-item" data-section="fullapp" onclick="switchSection('fullapp')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="9.5" rx="1.5"/><line x1="5" y1="14" x2="11" y2="14"/><line x1="8" y1="11.5" x2="8" y2="14"/></svg></div>
-        <span>Full App</span>
-        <button class="ni-gear" onclick="openEmbedOpts('fullapp',event)" title="AppEmbed options">⚙<span class="ni-gear-badge" id="ngb-fullapp"></span></button>
+  <!-- ── Workspace ────────────────────────────────────────────────────── -->
+  <div id="workspace">
+
+    <!-- Embed type rail -->
+    <nav id="rail" aria-label="Embed types">
+      <div class="rail-lbl">Embeds</div>
+      <ul id="embed-list"></ul>
+      <div class="rail-spacer"></div>
+      <div class="rail-foot">
+        <a id="docs-link" href="https://developers.thoughtspot.com/docs/" target="_blank" rel="noopener">SDK docs ↗</a>
       </div>
     </nav>
 
-    <!-- Advanced section divider -->
-    <div class="sb-divider"></div>
+    <!-- Stage: render area + bottom panel -->
+    <main id="stage">
 
-    <!-- Advanced collapsible group header -->
-    <div class="sb-group-hdr" onclick="toggleAdvanced()">
-      <span class="sb-section-lbl" style="padding:0;margin:0">Advanced</span>
-      <span class="adv-chevron" id="adv-chevron">›</span>
-    </div>
-
-    <!-- Advanced sub-items (collapsed by default) -->
-    <div class="adv-group" id="adv-group">
-      <div class="nav-item adv-item" data-feature="filters" onclick="openFeaturePanel('filters')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="4" y1="8" x2="12" y2="8"/><line x1="6" y1="12" x2="10" y2="12"/></svg></div>
-        <span>Runtime Filters</span>
-      </div>
-      <div class="nav-item adv-item" data-feature="params" onclick="openFeaturePanel('params')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><line x1="1" y1="4" x2="15" y2="4"/><circle cx="5" cy="4" r="2"/><line x1="1" y1="12" x2="15" y2="12"/><circle cx="11" cy="12" r="2"/></svg></div>
-        <span>Runtime Parameters</span>
-      </div>
-      <div class="nav-item adv-item" data-feature="actions" onclick="openFeaturePanel('actions')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2l2.5 2.5-8 8-3.5.5.5-3.5z"/><line x1="9.5" y1="4" x2="12" y2="6.5"/></svg></div>
-        <span>Modify Actions</span>
-      </div>
-      <div class="nav-item adv-item" data-dev-only="true" data-feature="custom-action" onclick="openFeaturePanel('custom-action')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5L3.5 9H8L7 14.5 12.5 7H8.5z"/></svg></div>
-        <span>Custom Actions</span>
-      </div>
-      <div class="nav-item adv-item" data-dev-only="true" data-feature="code-action" onclick="openFeaturePanel('code-action')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="5.5,4.5 1.5,8 5.5,11.5"/><polyline points="10.5,4.5 14.5,8 10.5,11.5"/></svg></div>
-        <span>Code-Based Actions</span>
-      </div>
-      <div class="nav-item adv-item" data-dev-only="true" data-feature="host-events" onclick="openFeaturePanel('host-events')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="1.5" fill="currentColor"/><path d="M5.2 5.2a4 4 0 000 5.6"/><path d="M10.8 5.2a4 4 0 010 5.6"/><path d="M2.9 2.9a7.5 7.5 0 000 10.2"/><path d="M13.1 2.9a7.5 7.5 0 010 10.2"/></svg></div>
-        <span>Host Events</span>
-      </div>
-      <div class="nav-item adv-item" data-feature="styles" onclick="openFeaturePanel('styles')">
-        <div class="ni-icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2l3 3-6.5 6.5a2 2 0 01-2.8 0l-.7-.7a2 2 0 010-2.8z"/><path d="M3.5 12.5c0 1-.4 1.5-1 2a2.5 2.5 0 002 .5c.8 0 1.5-.6 1.5-1.5v-.5L5 12l-1.5.5z"/></svg></div>
-        <span>Custom Styles</span>
-      </div>
-    </div>
-
-    <div class="sb-footer">
-      <button class="back-btn" onclick="exitAnalyticsMode()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="10,3 4,8 10,13"/></svg>Back to Home</button>
-    </div>
-  </div>
-
-  <!-- Main -->
-  <div id="main">
-
-    <!-- Header bar -->
-    <div class="c-header">
-      <div class="c-header-l">
-        <span class="c-title" id="section-title">Search Data</span>
-        <span class="c-badge" id="section-badge">SearchEmbed</span>
-      </div>
-      <button class="cfg-btn" onclick="toggleConfig()">⚙ Configure</button>
-    </div>
-
-    <!-- Custom filter bar (shown only in Custom Filters view) -->
-    <div id="custom-filter-bar" class="custom-filter-bar" style="display:none;">
-      <div id="filter-dropdowns" class="filter-dropdowns"></div>
-      <div class="add-filter-wrapper">
-        <button id="add-filter-btn" class="add-filter-btn" onclick="toggleAddFilterPicker()" title="Add a filter configured in the liveboard. Only columns with filter tiles in ThoughtSpot will work.">+ Add Filter</button>
-        <div id="add-filter-picker" class="add-filter-picker" style="display:none;"></div>
-      </div>
-      <button class="filter-clear-btn" onclick="clearCustomFilters()">Clear All</button>
-    </div>
-
-    <!-- Embed area -->
-    <div class="embed-area">
-      <div id="ts-embed-container"></div>
-      <div id="embed-loading">
-
-        <!-- State: checking auth -->
-        <div class="ls ls-checking active">
-          <div class="spinner"></div>
-          <span class="ls-title">Verifying connection…</span>
-          <span class="ls-sub">Checking your ThoughtSpot session</span>
-          <span class="ls-url" id="checking-host"></span>
-        </div>
-
-        <!-- State: not logged in -->
-        <div class="ls ls-unauth">
-          <div class="ls-icon">🔒</div>
-          <span class="ls-tag error">Not Authenticated</span>
-          <span class="ls-title">Login Required</span>
-          <span class="ls-sub">You need to be logged into ThoughtSpot before the embed can render. Open ThoughtSpot in a new tab, log in, then return here.</span>
-          <span class="ls-url" id="unauth-host"></span>
-          <div class="ls-actions">
-            <a class="ls-link" id="ts-login-link" href="#" target="_blank">Open ThoughtSpot ↗</a>
-            <button class="ls-btn" onclick="retryAuth()">I'm logged in — Retry</button>
+      <!-- Website-native filter bar (Custom Liveboard only) -->
+      <div id="custom-filter-bar" class="cfb" hidden>
+        <span class="cfb-heading">
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h14M3.5 8h9M6 13.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          Filters
+        </span>
+        <div id="cfb-dropdowns" class="cfb-dropdowns"></div>
+        <div class="cfb-actions">
+          <button id="cfb-clear" class="cfb-clear" type="button">Clear all</button>
+          <div class="cfb-export-group">
+            <select id="cfb-format" class="cfb-format" title="Report file format (REST: file_format)">
+              <option value="PDF">PDF</option>
+              <option value="XLSX">XLSX</option>
+              <option value="CSV">CSV</option>
+              <option value="PNG">PNG</option>
+            </select>
+            <button id="cfb-export" class="cfb-export" type="button" title="Export this liveboard via POST /api/rest/2.0/report/liveboard — active filters bake in as override_filters">⬇ Export</button>
           </div>
         </div>
-
-        <!-- State: CORS / unverifiable -->
-        <div class="ls ls-cors">
-          <div class="ls-icon">⚠️</div>
-          <span class="ls-tag warn">Cannot Verify Session</span>
-          <span class="ls-title">CORS Restriction Detected</span>
-          <span class="ls-sub">
-            The browser blocked the auth check — this happens when you open the file directly (<code style="font-family:monospace;font-size:11px;background:var(--surface);padding:1px 5px;border-radius:3px;">file://</code>).
-            <br><br>
-            <strong style="color:var(--text-primary)">Fix:</strong> Open this project using
-            <strong style="color:var(--accent)">VS Code Live Server</strong> on
-            <strong style="color:var(--accent)">localhost:5500</strong> — that origin is already
-            whitelisted in ThoughtSpot.
-            <br><br>
-            Alternatively, log into ThoughtSpot first, then click <em>Proceed Anyway</em>.
-          </span>
-          <div class="ls-actions">
-            <a class="ls-link" id="cors-login-link" href="#" target="_blank">Log in to ThoughtSpot ↗</a>
-            <button class="ls-btn" onclick="forceRender()">Proceed Anyway</button>
-          </div>
-        </div>
-
-        <!-- State: connection / host error -->
-        <div class="ls ls-error">
-          <div class="ls-icon">🔴</div>
-          <span class="ls-tag error">Connection Error</span>
-          <span class="ls-title">Could Not Reach ThoughtSpot</span>
-          <span class="ls-sub" id="error-detail">Unable to connect. Check the Host URL in Configuration.</span>
-          <div class="ls-actions">
-            <button class="ls-btn" onclick="retryAuth()">Retry</button>
-            <button class="ls-btn ls-btn-reset" onclick="resetAll()">Reset All</button>
-            <button class="ls-btn" onclick="toggleConfig()">Open Config ⚙</button>
-          </div>
-        </div>
-
-        <!-- State: rendering embed -->
-        <div class="ls ls-loading">
-          <div class="spinner"></div>
-          <span class="ls-title">Loading embed…</span>
-          <span class="ls-sub" id="loading-section-name"></span>
-        </div>
-
       </div>
-    </div>
 
-    <!-- Bottom Panel: Event Log + Embed Code (tabbed) -->
-    <div id="bottom-panel">
-      <div class="bp-header">
-        <div class="bp-tabs">
-          <button class="bp-tab active" id="bp-tab-log" onclick="switchBottomTab('log')">
-            <span class="log-dot"></span>
-            Event Log
-            <span class="log-count" id="log-count">0 events</span>
-          </button>
-          <button class="bp-tab" id="bp-tab-code" onclick="switchBottomTab('code')">
-            <span class="bp-tab-icon">&lt;/&gt;</span>
-            SDK Preview
-          </button>
-        </div>
-        <div class="bp-header-r">
-          <button class="bp-reset-btn" onclick="resetAll()" title="Reset all advanced options and re-render">Reset All</button>
-          <button class="bp-copy-btn" id="cv-copy-btn" onclick="copyEmbedCode()" style="visibility:hidden">Copy</button>
-          <span class="bp-chevron" id="bp-chevron" onclick="toggleBottomPanel()">▲</span>
-        </div>
-      </div>
-      <div class="bp-body" id="bp-body">
-        <div class="bp-pane active" id="bp-pane-log">
-          <div class="log-body" id="log-body">
-            <div class="log-inner">
-              <div class="log-empty" id="log-empty">No events yet. Interact with the embed to see events here.</div>
+      <div id="embed-area">
+        <div id="ts-embed-container"></div>
+
+        <!-- State overlay (one of: not-connected | not-logged-in | loading | error | needs) -->
+        <div id="state-overlay">
+          <div class="st st-not-connected">
+            <div class="st-icon">⚓</div>
+            <div class="st-title">Connect a ThoughtSpot instance</div>
+            <div class="st-sub">Enter your instance URL in the bar above and click Connect. Browser-session auth uses your existing ThoughtSpot login.</div>
+          </div>
+          <div class="st st-not-logged-in">
+            <div class="st-icon">🔒</div>
+            <div class="st-title" id="not-logged-in-title">Not authenticated</div>
+            <div class="st-sub" id="not-logged-in-sub">Browser-session auth needs an active login at the host. Open ThoughtSpot, sign in, then retry.</div>
+            <div class="st-actions">
+              <a id="login-link" class="st-link" href="#" target="_blank" rel="noopener">Open ThoughtSpot ↗</a>
+              <button class="st-btn" data-act="retry">Retry</button>
+            </div>
+          </div>
+          <div class="st st-confirm-host">
+            <div class="st-icon">🔗</div>
+            <div class="st-title">Connect to this shared host?</div>
+            <div class="st-sub">This shared link wants to connect to <strong id="confirm-host-name"></strong>. Connecting sends requests to that host from your browser — only continue if you trust whoever sent the link.</div>
+            <div class="st-actions">
+              <button id="confirm-host-go" class="st-btn">Connect</button>
+            </div>
+          </div>
+          <div class="st st-needs">
+            <div class="st-icon">◎</div>
+            <div class="st-title" id="needs-title">Pick a data object</div>
+            <div class="st-sub" id="needs-sub">Choose what to display from the Object section in the inspector.</div>
+          </div>
+          <div class="st st-loading">
+            <div class="st-spinner"></div>
+            <div class="st-title">Loading embed…</div>
+            <div class="st-sub" id="loading-sub"></div>
+          </div>
+          <div class="st st-error">
+            <div class="st-icon">⚠</div>
+            <div class="st-title">Could not render</div>
+            <div class="st-sub" id="error-sub"></div>
+            <div class="st-actions">
+              <button class="st-btn" data-act="retry">Retry</button>
+              <button class="st-btn st-btn-ghost" data-act="proceed">Proceed anyway</button>
             </div>
           </div>
         </div>
-        <div class="bp-pane" id="bp-pane-code">
-          <pre class="cv-code" id="cv-code">// Select a section from the sidebar to see the generated SDK code here.</pre>
+      </div>
+
+      <!-- Bottom panel: Event Log + SDK Code -->
+      <section id="bottom" data-open="false">
+        <div class="bp-head">
+          <div class="bp-tabs">
+            <button class="bp-tab active" data-tab="log"><span class="bp-dot"></span>Event Log <span id="log-count" class="bp-count">0</span></button>
+            <button class="bp-tab" data-tab="code">&lt;/&gt; SDK Code</button>
+            <button class="bp-tab" data-tab="flow">⟿ SDK Lifecycle</button>
+            <button class="bp-tab" data-tab="apis">⚯ APIs Used</button>
+          </div>
+          <div class="bp-head-r">
+            <button id="copy-code" class="bp-mini" hidden>Copy</button>
+            <button id="clear-log" class="bp-mini">Clear</button>
+            <button id="bp-toggle" class="bp-chevron">▲</button>
+          </div>
         </div>
-      </div>
-    </div>
-
-  </div><!-- /#main -->
-</div><!-- /#app -->
-
-
-<!-- Config Panel -->
-<div id="config-panel">
-  <div class="cp-header">
-    <span class="cp-title">Configuration</span>
-    <div class="cp-close" onclick="toggleConfig()">✕</div>
-  </div>
-  <div class="cp-body">
-
-    <div class="cp-group">
-      <div class="cp-group-title">ThoughtSpot Connection</div>
-      <div class="cp-field">
-        <label class="cp-label">Host URL</label>
-        <div class="cp-connect-row">
-          <input class="cp-input" id="cfg-host" type="text" placeholder="https://your-instance.thoughtspot.cloud"
-                 onkeydown="if(event.key==='Enter')connectAndDiscover()">
-          <button class="cp-discover-btn" onclick="connectAndDiscover()">Connect</button>
+        <div class="bp-body">
+          <div class="bp-pane active" id="pane-log"><div id="log-list" class="log-list"><div class="log-empty">No events yet — interact with the embed.</div></div></div>
+          <div class="bp-pane" id="pane-code"><pre id="code-view" class="code-view"></pre></div>
+          <div class="bp-pane" id="pane-flow"><div id="flow-diagram" class="flow"></div></div>
+          <div class="bp-pane" id="pane-apis"><div class="log-empty">Connect and render an embed to see the APIs in use.</div></div>
         </div>
-        <div class="cp-hint" id="discover-status" style="display:none"></div>
-      </div>
-      <div class="cp-field">
-        <label class="cp-label">Auth Type</label>
-        <span class="cp-static-value">None</span>
-      </div>
-      <details class="cp-advanced" id="cfg-advanced" data-dev-only="true">
-        <summary>Advanced: use token for discovery</summary>
-        <div class="cp-field" style="margin-top:10px;">
-          <label class="cp-label">Bearer Token</label>
-          <input class="cp-input" id="cfg-token" type="password" autocomplete="off"
-                 placeholder="Paste your ThoughtSpot bearer token" spellcheck="false">
-          <label class="cp-check-label" style="margin-top:6px;">
-            <input type="checkbox" id="cfg-token-persist"> Remember for this session
-          </label>
+      </section>
+    </main>
+
+    <!-- Inspector: contextual options for the active embed -->
+    <aside id="inspector" aria-label="Options">
+      <div class="insp-head">
+        <div>
+          <div id="insp-title" class="insp-title">Search Data</div>
+          <div id="insp-badge" class="insp-badge">SearchEmbed</div>
         </div>
-      </details>
-    </div>
-
-    <div class="cp-group">
-      <div class="cp-group-title">Data Objects</div>
-      <div class="cp-hint" style="margin-bottom:12px;">Enter the Host URL and click Connect to load available objects.</div>
-      <input type="hidden" id="cfg-worksheet">
-      <input type="hidden" id="cfg-liveboard">
-      <input type="hidden" id="cfg-viz">
-      <input type="hidden" id="cfg-answer">
-      <div class="cp-field">
-        <label class="cp-label">Worksheet / Model</label>
-        <select class="cp-select" id="cfg-worksheet-sel" disabled onchange="onWorksheetSelect(this.value)">
-          <option value="">— connect first —</option>
-        </select>
-        <div class="cp-hint">Used by: Search Data, Spotter AI, NL Search</div>
+        <button id="insp-reset" class="insp-reset" title="Reset options for this embed">↺</button>
       </div>
-      <div class="cp-field">
-        <label class="cp-label">Liveboard</label>
-        <select class="cp-select" id="cfg-liveboard-sel" disabled onchange="onLiveboardSelect(this.value)">
-          <option value="">— connect first —</option>
-        </select>
-        <div class="cp-hint">Used by: Liveboard, Visualization</div>
-      </div>
-      <div class="cp-field">
-        <label class="cp-label">Visualization</label>
-        <select class="cp-select" id="cfg-viz-sel" disabled onchange="onVizSelect(this.value)">
-          <option value="">— select a liveboard first —</option>
-        </select>
-        <div class="cp-hint">Used by: Visualization</div>
-      </div>
-      <div class="cp-field" id="cfg-answer-field" style="display:none">
-        <label class="cp-label">Standalone Answer</label>
-        <select class="cp-select" id="cfg-answer-sel" onchange="onAnswerSelect(this.value)">
-          <option value="">Select an answer...</option>
-        </select>
-        <div class="cp-hint">Optional. Renders this answer in the Visualization tab instead of the liveboard viz. Select a Worksheet above first.</div>
-      </div>
-    </div>
-
-    <div class="cp-group">
-      <div class="cp-group-title">Search Options</div>
-      <div class="cp-field">
-        <label class="cp-label">Pre-fill Search Query</label>
-        <input class="cp-input" id="cfg-search-token" type="text" placeholder="e.g. [Sales Amount] [Region]">
-        <div class="cp-hint">Optional. Pre-populates the search bar on load.</div>
-      </div>
-      <div class="cp-field">
-        <label class="cp-label">Auto-execute Search</label>
-        <select class="cp-select" id="cfg-execute-search">
-          <option value="false">No — place cursor in search bar</option>
-          <option value="true">Yes — run query immediately</option>
-        </select>
-      </div>
-    </div>
-
-  </div>
-  <div class="cp-footer">
-    <button class="apply-btn" onclick="applyConfig()">Apply &amp; Reload Embed</button>
-  </div>
-</div>
-
-<!-- Feature Panel (slide-out from right, same pattern as config panel) -->
-<div id="feature-panel">
-  <div class="cp-header">
-    <span class="cp-title" id="fp-title">Feature</span>
-    <div class="cp-close" onclick="closeFeaturePanel()">✕</div>
-  </div>
-  <div class="cp-body" style="padding:0">
-
-    <!-- Runtime Filters -->
-    <div class="fp-content" id="fp-filters">
-      <div class="fp-intro">
-        <p>Apply runtime filters to the active embed using <code>HostEvent.UpdateRuntimeFilters</code>. No re-render required.</p>
-        <div class="fp-badge">Works best on: Liveboard · Viz · Full App</div>
-      </div>
-      <div class="fp-section-lbl">Filter Rules</div>
-      <div id="filter-rows" style="display:flex;flex-direction:column;gap:8px;padding:0 16px;"></div>
-      <div style="padding:12px 16px;">
-        <button class="fp-add-btn" onclick="addFilterRow()">+ Add Filter Row</button>
-      </div>
-      <div class="fp-footer-actions">
-        <button class="apply-btn" onclick="applyRuntimeFilters()">Apply Filters</button>
-        <button class="ls-btn" onclick="clearRuntimeFilters()">Clear All</button>
-      </div>
-    </div>
-
-    <!-- Runtime Parameters -->
-    <div class="fp-content" id="fp-params">
-      <div class="fp-intro">
-        <p>Pass named parameters to the embed at render time. Parameters are ThoughtSpot formula-level variables defined by your data team.</p>
-        <div class="fp-badge">Works on: Search · Liveboard · Viz</div>
-        <p style="margin-top:8px">Changes require a <strong>re-render</strong> — click Apply.</p>
-      </div>
-      <div class="fp-section-lbl">Parameter Values</div>
-      <div id="param-rows" style="display:flex;flex-direction:column;gap:8px;padding:0 16px;"></div>
-      <div style="padding:12px 16px;">
-        <button class="fp-add-btn" onclick="addParamRow()">+ Add Parameter</button>
-      </div>
-      <div class="fp-footer-actions">
-        <button class="apply-btn" onclick="applyRuntimeParams()">Apply — Re-render</button>
-        <button class="ls-btn" onclick="clearRuntimeParams()">Clear All</button>
-      </div>
-    </div>
-
-    <!-- Modify Actions -->
-    <div class="fp-content" id="fp-actions">
-      <div class="fp-intro">
-        <p>Control which actions appear in the embed's context menus and toolbar. Changes require a re-render.</p>
-        <div class="fp-badge">Works on: All embed types</div>
-      </div>
-      <div class="fp-section-lbl">Action Visibility</div>
-      <div class="action-table">
-        <div class="at-header">
-          <span style="flex:1">Action</span>
-          <span style="width:52px;text-align:center">Hide</span>
-          <span style="width:64px;text-align:center">Disable</span>
-        </div>
-        <div class="at-row"><span class="at-name">Download</span><input type="checkbox" class="act-hide at-cb" data-action="Download"><input type="checkbox" class="act-disable at-cb" data-action="Download"></div>
-        <div class="at-row"><span class="at-name">Download as CSV</span><input type="checkbox" class="act-hide at-cb" data-action="DownloadAsCsv"><input type="checkbox" class="act-disable at-cb" data-action="DownloadAsCsv"></div>
-        <div class="at-row"><span class="at-name">Download as PDF</span><input type="checkbox" class="act-hide at-cb" data-action="DownloadAsPdf"><input type="checkbox" class="act-disable at-cb" data-action="DownloadAsPdf"></div>
-        <div class="at-row"><span class="at-name">Download as XLSX</span><input type="checkbox" class="act-hide at-cb" data-action="DownloadAsXlsx"><input type="checkbox" class="act-disable at-cb" data-action="DownloadAsXlsx"></div>
-        <div class="at-row"><span class="at-name">Share</span><input type="checkbox" class="act-hide at-cb" data-action="Share"><input type="checkbox" class="act-disable at-cb" data-action="Share"></div>
-        <div class="at-row"><span class="at-name">Edit</span><input type="checkbox" class="act-hide at-cb" data-action="Edit"><input type="checkbox" class="act-disable at-cb" data-action="Edit"></div>
-        <div class="at-row"><span class="at-name">Pin to Board</span><input type="checkbox" class="act-hide at-cb" data-action="Pin"><input type="checkbox" class="act-disable at-cb" data-action="Pin"></div>
-        <div class="at-row"><span class="at-name">Explore</span><input type="checkbox" class="act-hide at-cb" data-action="Explore"><input type="checkbox" class="act-disable at-cb" data-action="Explore"></div>
-        <div class="at-row"><span class="at-name">Drill Down</span><input type="checkbox" class="act-hide at-cb" data-action="DrillDown"><input type="checkbox" class="act-disable at-cb" data-action="DrillDown"></div>
-        <div class="at-row"><span class="at-name">Liveboard Info</span><input type="checkbox" class="act-hide at-cb" data-action="LiveboardInfo"><input type="checkbox" class="act-disable at-cb" data-action="LiveboardInfo"></div>
-        <div class="at-row"><span class="at-name">SpotIQ Analyze</span><input type="checkbox" class="act-hide at-cb" data-action="SpotIQAnalyze"><input type="checkbox" class="act-disable at-cb" data-action="SpotIQAnalyze"></div>
-      </div>
-      <div class="fp-footer-actions">
-        <button class="apply-btn" onclick="applyActionMods()">Apply — Reload Embed</button>
-        <button class="ls-btn" onclick="resetActionMods()">Reset</button>
-      </div>
-    </div>
-
-    <!-- Custom Actions -->
-    <div class="fp-content" id="fp-custom-action">
-      <div class="fp-intro">
-        <p>Inject custom buttons into the embed's context menu or toolbar. When clicked, the embed fires <code>EmbedEvent.CustomAction</code> and you capture the data payload here.</p>
-        <div class="fp-badge">Works on: Liveboard · Viz · Full App</div>
-      </div>
-      <div class="fp-section-lbl">Define Action</div>
-      <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
-        <div class="cp-field">
-          <label class="cp-label">Button Label</label>
-          <input class="cp-input" id="ca-label" placeholder="e.g. Send to CRM">
-        </div>
-        <div class="cp-field">
-          <label class="cp-label">Position</label>
-          <select class="cp-select" id="ca-position">
-            <option value="END">End of menu</option>
-            <option value="START">Start of menu</option>
-          </select>
-        </div>
-        <button class="apply-btn" onclick="addCustomAction()">+ Add Action &amp; Re-render</button>
-      </div>
-      <div class="fp-section-lbl" id="ca-registered-lbl" style="display:none">Active Actions</div>
-      <div id="ca-action-chips" style="padding:0 16px 8px;display:flex;flex-wrap:wrap;gap:6px"></div>
-      <div class="fp-section-lbl" id="ca-payload-lbl" style="display:none">Last Payload</div>
-      <div id="ca-payload-wrap" style="padding:0 16px 12px;display:none">
-        <pre class="ca-payload" id="ca-payload"></pre>
-      </div>
-      <div class="fp-footer-actions">
-        <button class="ls-btn" onclick="clearCustomActions()">Clear All Actions</button>
-      </div>
-    </div>
-
-    <!-- Code-Based Actions -->
-    <div class="fp-content" id="fp-code-action">
-      <div class="fp-intro">
-        <p>Define actions entirely in code — no ThoughtSpot admin setup required. The SDK injects the button and fires <code>EmbedEvent.CustomAction</code> when clicked.</p>
-        <div class="fp-badge">Works on: Liveboard · Viz · Full App</div>
-      </div>
-      <div class="fp-section-lbl">Configure</div>
-      <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
-        <div class="cp-field">
-          <label class="cp-label">Button Label</label>
-          <input class="cp-input" id="cca-label" placeholder="Export Data" oninput="updateCodePreview()">
-        </div>
-        <div class="cp-field">
-          <label class="cp-label">Position</label>
-          <select class="cp-select" id="cca-position" onchange="updateCodePreview()">
-            <option value="START">START — before built-in actions</option>
-            <option value="END">END — after built-in actions</option>
-          </select>
-        </div>
-      </div>
-      <div class="fp-section-lbl">Generated Code</div>
-      <pre class="ca-payload" id="cca-preview" style="margin:0 16px 4px;max-height:140px;font-size:10.5px"></pre>
-      <div class="fp-section-lbl" id="cca-payload-lbl" style="display:none">Captured Payload</div>
-      <div id="cca-payload-wrap" style="padding:0 16px 12px;display:none">
-        <pre class="ca-payload" id="cca-payload"></pre>
-      </div>
-      <div class="fp-footer-actions">
-        <button class="apply-btn" onclick="applyCodeAction()">Apply &amp; Re-render</button>
-        <button class="ls-btn" onclick="clearCodeAction()">Remove</button>
-      </div>
-    </div>
-
-    <!-- Host Events -->
-    <div class="fp-content" id="fp-host-events">
-      <div class="fp-intro">
-        <p>Send commands to the active embed in real time using <code>HostEvent.trigger()</code>. Switch to the target embed type first, then fire the event.</p>
-        <div class="fp-badge">Acts on the currently active embed</div>
-      </div>
-
-      <div class="fp-section-lbl">
-        <span>Search Query</span>
-        <span class="he-embed-tag">Search Data</span>
-      </div>
-      <div class="he-row">
-        <input class="cp-input" id="he-search" placeholder="e.g. [Sales Amount] [Region]" style="flex:1">
-        <button class="fp-trigger-btn" title="Trigger HostEvent.Search" onclick="triggerHeSearch()">→</button>
-      </div>
-
-      <div class="fp-section-lbl">
-        <span>Navigate to Path</span>
-        <span class="he-embed-tag">Full App</span>
-      </div>
-      <div class="he-row">
-        <input class="cp-input" id="he-navigate" placeholder="e.g. saved-answer/guid" style="flex:1">
-        <button class="fp-trigger-btn" title="Trigger HostEvent.Navigate" onclick="triggerHeNavigate()">→</button>
-      </div>
-
-      <div class="fp-section-lbl">
-        <span>Show Only These Vizs</span>
-        <span class="he-embed-tag">Liveboard · Viz</span>
-      </div>
-      <div class="he-row">
-        <input class="cp-input" id="he-vizids" placeholder="viz-guid-1, viz-guid-2, ..." style="flex:1">
-        <button class="fp-trigger-btn" title="Trigger HostEvent.SetVisibleVizs" onclick="triggerHeSetVizs()">→</button>
-      </div>
-
-      <div class="fp-section-lbl">
-        <span>Reload</span>
-        <span class="he-embed-tag">All embeds</span>
-      </div>
-      <div style="padding:0 16px 12px">
-        <button class="ls-btn" style="width:100%" onclick="triggerHeReload()">⟳ Reload Embed</button>
-      </div>
-    </div>
-
-    <!-- Custom Styles -->
-    <div class="fp-content" id="fp-styles">
-      <div class="fp-intro">
-        <p>Inject CSS rules into the ThoughtSpot embed using <code>rules_UNSTABLE</code>. Use rows for quick edits or the code block for full control.</p>
-        <div class="fp-badge">Works on: All embed types</div>
-      </div>
-
-      <!-- Parse Element -->
-      <div class="fp-section-lbl">
-        <span>Parse Element</span>
-      </div>
-      <div style="padding:0 16px 12px">
-        <textarea class="cs-parse-input" id="cs-parse-input" spellcheck="false" placeholder="Paste HTML from DevTools here…"></textarea>
-        <div class="cs-rules-hint">In ThoughtSpot, right-click any element → <strong>Inspect</strong> → right-click the highlighted node → <strong>Copy → Copy element</strong>. Paste it above and click Extract.</div>
-        <button class="cs-mini-btn cs-parse-btn" onclick="parseElementHtml()">→ Extract Selector</button>
-      </div>
-
-      <!-- CSS Rules (rules_UNSTABLE) -->
-      <div class="fp-section-lbl">
-        <span>CSS Rules <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(rules_UNSTABLE)</span></span>
-        <button class="cs-mini-btn" onclick="addCssRuleRow()">+ Add Row</button>
-      </div>
-      <div id="css-rule-rows" style="padding:0 16px"></div>
-
-      <!-- Code Block -->
-      <div class="fp-section-lbl">
-        <span>Code Block</span>
-        <button class="cs-mini-btn" onclick="syncCodeBlockToRows()" title="Import rules from code block into rows above">↺ Sync</button>
-      </div>
-      <div style="padding:0 16px 8px">
-        <textarea class="cs-code-block" id="cs-code-block" spellcheck="false" placeholder="'[data-testid=&quot;my-el&quot;]': {&#10;  display: 'none !important',&#10;},"></textarea>
-        <div class="cs-rules-hint">Write JS-style rules here, or use the rows above. Click Sync ↺ to import code into rows.</div>
-        <div class="cs-sample-lbl">Example</div>
-        <pre class="cs-sample"><span class="cv-str">'[data-testid="data-panel-accordion-parameters"]'</span>: {
-  display: <span class="cv-str">'none !important'</span>,
-},
-<span class="cv-str">'[data-testid="share-button"]'</span>: {
-  display: <span class="cv-str">'none !important'</span>,
-},
-<span class="cv-str">'.bp3-navbar'</span>: {
-  background: <span class="cv-str">'#0a0f1e'</span>,
-  borderBottom: <span class="cv-str">'1px solid #1e2a45'</span>,
-},</pre>
-      </div>
-
-      <div class="fp-footer-actions">
-        <button class="apply-btn" onclick="applyCustomStyles()">Apply — Reload Embed</button>
-        <button class="ls-btn" onclick="resetCustomStyles()">Reset</button>
-      </div>
-    </div>
+      <div id="insp-body" class="insp-body"></div>
+    </aside>
 
   </div>
 </div>
 
-<div id="overlay" onclick="handleOverlayClick()"></div>
+<!-- ── Trusted-auth token-claims playground (slide-over) ────────────────── -->
+<div id="auth-modal" class="modal" hidden>
+  <div class="modal-scrim" data-close="auth"></div>
+  <div class="modal-panel auth-panel">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Trusted Auth — token claims</div>
+        <div class="modal-sub">Mint tokens with groups, JIT provisioning, and ABAC/RLS entitlements. The secret_key stays on the server.</div>
+      </div>
+      <button class="modal-close" data-close="auth">✕</button>
+    </div>
+    <div id="auth-body" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
 
 <script type="module" src="js/app.js"></script>
-<script src="js/landing.js"></script>
-
-<!-- ── Snake Game Modal (iframe shell — game lives in snake/) ─────────── -->
-<div id="snake-modal">
-  <iframe id="snake-frame" src="" frameborder="0" scrolling="no"></iframe>
-</div>
-
-<script>
-window.openSnakeGame = function() {
-  document.getElementById('snake-frame').src = 'snake/index.html';
-  document.getElementById('snake-modal').classList.add('open');
-};
-window.closeSnakeGame = function() {
-  document.getElementById('snake-modal').classList.remove('open');
-  document.getElementById('snake-frame').src = '';
-};
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape' && document.getElementById('snake-modal').classList.contains('open')) closeSnakeGame();
-});
-</script>
-<!-- ── Embed Options Panel ────────────────────────────────────────────── -->
-<div id="eo-overlay" onclick="closeEmbedOpts()"></div>
-<div id="eo-panel">
-  <div class="eo-hdr">
-    <div>
-      <div class="eo-badge" id="eo-badge">SearchEmbed</div>
-      <div class="eo-title" id="eo-title">Embed Options</div>
-    </div>
-    <button class="eo-close" onclick="closeEmbedOpts()">✕</button>
-  </div>
-  <div class="eo-body" id="eo-body"></div>
-  <div class="eo-footer">
-    <button class="eo-reset" onclick="resetEmbedOpts()">↺ Reset</button>
-    <button class="eo-sdk-btn" onclick="closeEmbedOpts();switchBottomTab('code')" title="Open SDK Preview to see the generated code">SDK Preview →</button>
-  </div>
-</div>
-
 </body>
 </html>

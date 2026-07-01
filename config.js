@@ -1,24 +1,23 @@
 /**
- * Vantage Sales — ThoughtSpot Embed Configuration
- * Edit this file to update your ThoughtSpot connection and object GUIDs.
+ * config.js — OPTIONAL seed defaults for the ThoughtSpot Embed Playground.
+ *
+ * You do NOT need to edit this file to use the playground — set everything in the
+ * UI (top connection bar + the Object section) and share your setup with a link.
+ * Anything you put here just pre-fills the inputs on first load (before any saved
+ * state or shared link takes over). Leave blank to start empty.
+ *
+ * Precedence at boot: URL hash (#s=…) > localStorage > this seed > built-in defaults.
  */
 window.TS_CONFIG = {
-  // ── ThoughtSpot Instance ──────────────────────────────────────────────────
-  thoughtSpotHost: 'https://ps-internal.thoughtspot.cloud',
-  authType: 'None', // Options: None | TrustedAuthToken | EmbedSecret | SAMLRedirect | OIDCRedirect
-
-  // ── Data Objects ──────────────────────────────────────────────────────────
-  worksheetId: '04d7c86c-cac6-410d-ac7d-9698bda8b21b', // Used by Search + Spotter
-  liveboardId: '47074597-d3fa-4dd1-944b-258254353a04', // Used by Liveboard + Visualization
-  vizId:       '429e43c4-7368-4959-9a60-4ecbea225bcd', // Used by Visualization (paired with liveboardId)
-  answerId:    '', // Used by Visualization when a Standalone Answer is selected
-
-  // ── Search Defaults ───────────────────────────────────────────────────────
-  searchTokenString: '',   // Optional: pre-populate the search bar e.g. '[Sales Amount] [Region]'
-  executeSearch: false,    // If true, auto-runs the searchTokenString on load
-
-  // ── Custom Filters ────────────────────────────────────────────────────────
-  filterColumns: ['Territory'],  // Backend will fetch distinct values from the liveboard
-
-  // devFeatures: true,  // Uncomment to force-show dev-only features (Custom Actions, Code-Based Actions, Host Events) in production
+  thoughtSpotHost: '',   // e.g. 'https://your-instance.thoughtspot.cloud'
+  worksheetId:     '',   // optional starter Worksheet/Model GUID
+  liveboardId:     '',   // optional starter Liveboard GUID
+  vizId:           '',   // optional starter Visualization GUID
+  searchTokenString: '', // optional: pre-fill the Search embed query
+  executeSearch:   false,
 };
+
+// If you serve the static frontend from a DIFFERENT origin than the token server
+// (e.g. VS Code Live Server on :5500 while `npm start` runs on :3000), point the
+// API calls at the server here. Same-origin (npm start serving everything) needs nothing.
+// window.TS_API_BASE = 'http://localhost:3000';
