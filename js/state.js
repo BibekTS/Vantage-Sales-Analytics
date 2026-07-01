@@ -64,8 +64,8 @@ export function defaultState() {
       includeCustomLogo: true,
       footerText: '',
       hideNativeDownload: false,      // hide the in-embed Download action, export only via your button
-      menuAction: true,               // add a "Custom Export option" custom action in the Liveboard "…" menu
-      actionLabel: 'Custom Export option', // label of that menu action
+      menuAction: true,               // add a "Preconfigured pdf download" custom action in the Liveboard "…" menu
+      actionLabel: 'Preconfigured pdf download', // label of that menu action
       pickerAction: true,             // add a "Customize Export" action that opens a runtime options dialog
       pickerLabel: 'Customize Export', // label of that dialog-opening menu action
     },
@@ -278,9 +278,9 @@ function sanitize(raw) {
       footerText: str(e.footerText, 256),
       hideNativeDownload: bool(e.hideNativeDownload),
       menuAction: dflt(e.menuAction, true),
-      // Migrate the old default label ('Export') → the new default so persisted setups pick up
-      // the rename; a label the user deliberately typed (anything else) is kept as-is.
-      actionLabel: ((l) => (l && l !== 'Export' ? l : 'Custom Export option'))(str(e.actionLabel, 64)),
+      // Migrate the old default labels ('Export', 'Custom Export option') → the new default so
+      // persisted setups pick up the rename; a label the user deliberately typed is kept as-is.
+      actionLabel: ((l) => (l && l !== 'Export' && l !== 'Custom Export option' ? l : 'Preconfigured pdf download'))(str(e.actionLabel, 64)),
       pickerAction: dflt(e.pickerAction, true),
       pickerLabel: str(e.pickerLabel, 64) || 'Customize Export',
     };

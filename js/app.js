@@ -187,6 +187,7 @@ let editingActionId = null;      // id of the custom action currently loaded int
 let lastSaved = null;            // { name, guid, at } — most recent EmbedEvent.Save this session
 let drillParent = null;          // { liveboardId } — set while drilled into a detail board (Q4)
 let pendingHostConfirm = false;  // a shared-link (#s=) host is awaiting an explicit Connect click
+let tokenServerAvailable = true; // Trusted Auth mints via the local token server; probed on boot (see probeTokenServer)
 
 // ── AI Insights (headless REST panel) runtime state ───────────────────────────
 let aiQuery = '';   // last free-text question typed into the AI Insights panel
@@ -217,7 +218,7 @@ const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const seed = window.TS_CONFIG ? {
     host: window.TS_CONFIG.thoughtSpotHost || '',
     worksheetId: window.TS_CONFIG.worksheetId || '',
@@ -280,6 +281,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Format comes from the adjacent #cfb-format select (PDF/XLSX/CSV/PNG).
   $('#cfb-export')?.addEventListener('click', downloadCfbReport);
 
+  // Probe for the local token server BEFORE auto-connect. If it's absent (frontend opened via
+  // Live Server / a static host with no Node backend), Trusted Auth can't mint tokens — grey out
+  // the option and fall back to browser-session auth so Connect doesn't dead-end.
+  await probeTokenServer();
+
   // Auto-connect — but NOT to a host that arrived via the (attacker-controllable) #s= hash.
   // A shared link can name any host; connecting fires credentialed REST probes at it, so a
   // hash-sourced host requires an explicit click. Hosts from localStorage (you used it here
@@ -300,6 +306,49 @@ function showHostConfirm(host) {
   if (label) label.textContent = host;
   const btn = $('#confirm-host-go');
   if (btn) btn.onclick = () => connect();
+}
+
+// ── Trusted-auth availability ─────────────────────────────────────────────────
+// Trusted Auth mints short-lived tokens via the local Node server (/api/auth/token).
+// Opened WITHOUT that server (Live Server on :5500, or any static host), the endpoint
+// 404s / connection-refuses — so probe /api/auth/config and, if it's not there, grey out
+// the Trusted-token option (+ hide "Token claims…") instead of letting Connect fail.
+const TRUSTED_UNAVAILABLE_NOTE = 'Trusted Auth needs the local token server — run `npm start` (port 3000).';
+
+async function probeTokenServer() {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/config`, { headers: { Accept: 'application/json' } });
+    tokenServerAvailable = res.ok && (res.headers.get('content-type') || '').includes('application/json');
+  } catch (_) {
+    tokenServerAvailable = false; // network error / connection refused / wrong origin
+  }
+  applyTrustedAuthAvailability();
+}
+
+function applyTrustedAuthAvailability() {
+  const sel = $('#auth-select');
+  const opt = sel?.querySelector('option[value="TrustedAuthTokenCookieless"]');
+  const btn = $('#auth-config-btn');
+  if (opt) {
+    opt.disabled = !tokenServerAvailable;
+    opt.textContent = tokenServerAvailable ? 'Auth: Trusted token' : 'Auth: Trusted token (local server only)';
+  }
+  if (sel) sel.title = tokenServerAvailable ? 'Authentication type' : TRUSTED_UNAVAILABLE_NOTE;
+
+  if (!tokenServerAvailable) {
+    // A shared link / stored state may have left us on a trusted mode we can't fulfil.
+    // Fall back to browser-session auth so Connect doesn't dead-end on a missing endpoint.
+    if (getState().authType !== 'None') {
+      setState({ authType: 'None' });
+      if (sel) sel.value = 'None';
+      applyConfig();
+      logEvent('Trusted Auth', 'Unavailable — no local token server. Using browser session.');
+      toast(TRUSTED_UNAVAILABLE_NOTE, 'info');
+    }
+    if (btn) { btn.hidden = true; btn.disabled = true; }
+  } else if (btn) {
+    btn.disabled = false;
+  }
 }
 
 // ── Config bridge (state → embed.js/initSDK shape) ─────────────────────────────
@@ -643,6 +692,35 @@ function toast(msg, type = 'warn') {
   c.appendChild(t);
   requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('show')));
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 250); }, 3200);
+}
+
+// Persistent "busy" toast with a spinner — for long operations (REST exports, PDF builds) that
+// otherwise give no feedback, especially when fired from a custom action inside the embed. It stays
+// up until you call the returned done(finalMsg?, type?): with a message it swaps into a short-lived
+// result toast, with no args it just dismisses. Always call done() on every exit path.
+function showBusy(msg) {
+  const c = $('#toast-container');
+  const t = el('div', 'toast toast-busy');
+  const sp = el('span', 'toast-spinner');
+  const lbl = el('span', 'toast-busy-label');
+  lbl.textContent = msg; // may contain upstream text — keep as textContent
+  t.append(sp, lbl);
+  c.appendChild(t);
+  requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('show')));
+  let closed = false;
+  return (finalMsg, type = 'success') => {
+    if (closed) return;
+    closed = true;
+    if (finalMsg) {
+      sp.remove();
+      t.className = `toast toast-${type} show`;
+      lbl.textContent = finalMsg;
+      setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 250); }, 2600);
+    } else {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 250);
+    }
+  };
 }
 
 /** Trigger a browser download of a Blob with the given filename. */
@@ -991,13 +1069,13 @@ function buildEmbedCustomActions(s) {
   if (lbish && s.exportOpts?.menuAction) {
     actions.push({
       id: '__export',
-      name: s.exportOpts.actionLabel || 'Custom Export option',
+      name: s.exportOpts.actionLabel || 'Preconfigured pdf download',
       position: CustomActionsPosition.MENU,                   // the "…" overflow menu
       target: CustomActionTarget.LIVEBOARD,
     });
   }
   // "Customize Export" — same REST export, but the action opens a runtime dialog so the END USER
-  // picks the format/PDF options at click-time (vs "Custom Export option", which exports with the
+  // picks the format/PDF options at click-time (vs "Preconfigured pdf download", which exports with the
   // host's pre-set options). The dispatcher routes id '__export_customize' to openExportPicker().
   if (lbish && s.exportOpts?.pickerAction) {
     actions.push({
@@ -1055,9 +1133,9 @@ function sectionExport(s) {
   c.appendChild(toggleField('Hide native Download in embed', eo.hideNativeDownload, v => setExportOpt('hideNativeDownload', v),
     'Removes the built-in Download action so users can export only via your button — full control over the output.'));
 
-  c.appendChild(toggleField('Add “Custom Export option” to Liveboard menu', eo.menuAction, v => setExportOpt('menuAction', v),
+  c.appendChild(toggleField('Add “Preconfigured pdf download” to Liveboard menu', eo.menuAction, v => setExportOpt('menuAction', v),
     'Adds a custom action in the Liveboard “…” menu that exports immediately with the options set above. ThoughtSpot fires EmbedEvent.CustomAction; the host catches it and runs this REST export.'));
-  if (eo.menuAction) c.appendChild(textField('Menu action label', eo.actionLabel, v => setExportOpt('actionLabel', v || 'Custom Export option'), 'Custom Export option'));
+  if (eo.menuAction) c.appendChild(textField('Menu action label', eo.actionLabel, v => setExportOpt('actionLabel', v || 'Preconfigured pdf download'), 'Preconfigured pdf download'));
 
   c.appendChild(toggleField('Add “Customize Export” to Liveboard menu', eo.pickerAction, v => setExportOpt('pickerAction', v),
     'Adds a second menu action that opens a selection dialog so the end user picks the format & PDF options at export time, then downloads. The options above seed the dialog’s defaults.'));
@@ -1102,11 +1180,13 @@ async function performReportExport(eo, btn) {
   ];
   const old = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⬇ …'; }
+  const done = showBusy(`Preparing ${format} download…`);
   logEvent('Export', `report/liveboard ${format} → ${s.liveboardId}${overrideFilters.length ? ` (${overrideFilters.length} filter(s))` : ''}`);
   try {
     const res = await Discovery.downloadLiveboardReport(s.host, s.liveboardId, format, overrideFilters, eo);
     if (!res.ok) {
       logEvent('Export', `✗ ${res.error}`);
+      done();
       if (res.status === 401 || res.status === 403) {
         toast('Not authorized — log in at the host or use a token.');
       } else if (res.status === 400 && format === 'PDF' && eo.pageSize === 'CONTINUOUS') {
@@ -1118,9 +1198,11 @@ async function performReportExport(eo, btn) {
     }
     saveBlob(res.blob, `liveboard-${s.liveboardId}.${res.ext}`);
     logEvent('Export', `✓ ${res.ext.toUpperCase()} downloaded`);
+    done(`✓ ${res.ext.toUpperCase()} downloaded`, 'success');
     return true;
   } catch (e) {
     logEvent('Export', `✗ ${e.message}`);
+    done();
     toast(`${format} export failed: ${e.message}`);
     return false;
   } finally {
@@ -2365,18 +2447,22 @@ async function downloadCfbReport() {
     .map(([col, vals]) => ({ column_name: col, values: vals }));
 
   if (btn) { btn.disabled = true; btn.textContent = '⬇ …'; }
+  const done = showBusy(`Preparing ${format} download…`);
   logEvent('Export', `report/liveboard ${format} → ${s.liveboardId}${overrideFilters.length ? ` (${overrideFilters.length} override filter(s))` : ''}`);
   try {
     const res = await Discovery.downloadLiveboardReport(s.host, s.liveboardId, format, overrideFilters);
     if (!res.ok) {
       logEvent('Export', `✗ ${res.error}`);
+      done();
       toast(res.status === 401 || res.status === 403 ? 'Not authorized — log in at the host or use a token.' : `${format} export failed: ${res.error}`);
       return;
     }
     saveBlob(res.blob, `liveboard-${s.liveboardId}.${res.ext}`);
     logEvent('Export', `✓ ${res.ext.toUpperCase()} downloaded`);
+    done(`✓ ${res.ext.toUpperCase()} downloaded`, 'success');
   } catch (e) {
     logEvent('Export', `✗ ${e.message}`);
+    done();
     toast(`${format} export failed: ${e.message}`);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⬇ Export'; }
@@ -2477,11 +2563,12 @@ window.__onCustomAction = async (payload) => {
 // Invoice "Download PDF" — paginate the viz behind the action, group rows into invoices, and
 // build the multi-page PDF (one invoice per page) with the verbatim builder from invoice-pdf.js.
 async function handleInvoicePdf(payload) {
-  toast('Building invoice PDF…', 'info');
+  const done = showBusy('Preparing PDF download…');
   try {
     const svc = await resolveAnswerService(payload);
     if (!svc) {
       logEvent('CustomAction', '✗ Download invoice PDF — could not obtain an answer session for the viz (see console)');
+      done();
       toast('Download invoice PDF: no data session available — see console.');
       return;
     }
@@ -2489,14 +2576,17 @@ async function handleInvoicePdf(payload) {
     const docs = groupStatements(rows, schema);
     if (!docs.length) {
       logEvent('CustomAction', '✗ Download invoice PDF — 0 rows returned from the viz');
+      done();
       toast('Download invoice PDF: no rows to export.');
       return;
     }
     downloadStatementsPdf(docs);
     logEvent('CustomAction', `✓ Download invoice PDF — ${docs.length} statement(s) from ${rows.length} row(s) → sales-statements.pdf`);
+    done('✓ PDF downloaded', 'success');
   } catch (e) {
     console.error('Invoice PDF export failed', e);
     logEvent('CustomAction', `✗ Download invoice PDF failed — ${e.message}`);
+    done();
     toast('Download invoice PDF failed — see console.');
   }
 }
@@ -2716,7 +2806,7 @@ function generateCode() {
   if (s.customActions.length || exportMenu || pickerMenu) {
     opt.push('  customActions: [');
     s.customActions.forEach(a => opt.push(`    { id: '${esc(a.id)}', name: '${esc(a.label)}', position: CustomActionsPosition.${a.pos || 'PRIMARY'}, target: CustomActionTarget.${a.target || 'LIVEBOARD'} },`));
-    if (exportMenu) opt.push(`    { id: 'export', name: '${esc(s.exportOpts.actionLabel || 'Custom Export option')}', position: CustomActionsPosition.MENU, target: CustomActionTarget.LIVEBOARD },`);
+    if (exportMenu) opt.push(`    { id: 'export', name: '${esc(s.exportOpts.actionLabel || 'Preconfigured pdf download')}', position: CustomActionsPosition.MENU, target: CustomActionTarget.LIVEBOARD },`);
     if (pickerMenu) opt.push(`    { id: 'export-customize', name: '${esc(s.exportOpts.pickerLabel || 'Customize Export')}', position: CustomActionsPosition.MENU, target: CustomActionTarget.LIVEBOARD },`);
     opt.push('  ],');
   }

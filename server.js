@@ -294,10 +294,27 @@ app.post('/api/auth/token', rateLimiter({ windowMs: 60_000, max: 60 }), async (r
       objects,
     };
 
-    const result = await mintToken(params);
+    let result;
+    let warning;
+    try {
+      result = await mintToken(params);
+    } catch (err) {
+      // Some clusters have the token-level `user_parameters` (the "JWT Beta") path turned OFF.
+      // A `full` mint that carries user_parameters then 400s with "JWT Beta endpoint is disabled".
+      // Rather than dead-end the user, retry a PLAIN token so the embed can still authenticate —
+      // but say clearly that the entitlements were dropped (this is a testing playground).
+      const betaDisabled = err.statusCode === 400 && /JWT Beta endpoint is disabled/i.test(JSON.stringify(err.upstream || ''));
+      if (betaDisabled && tokenType === 'full' && params.userParameters) {
+        params.userParameters = undefined; // also fixes the echo below to reflect what we sent
+        result = await mintToken(params);
+        warning = 'This cluster has token-level filters (user_parameters) disabled, so a plain token was minted WITHOUT them. Apply filters via the embed’s Runtime filters panel, or switch Token type to "custom" and use variable_values for real RLS/ABAC.';
+      } else {
+        throw err;
+      }
+    }
 
     // Log only non-sensitive metadata.
-    console.log(`[token] minted ${tokenType} for "${requested}" (validity ${validitySeconds}s, len ${result?.token?.length ?? 0})`);
+    console.log(`[token] minted ${tokenType} for "${requested}" (validity ${validitySeconds}s, len ${result?.token?.length ?? 0})${warning ? ' [user_parameters dropped — beta path off]' : ''}`);
 
     res.json({
       token: result.token,
@@ -306,6 +323,7 @@ app.post('/api/auth/token', rateLimiter({ windowMs: 60_000, max: 60 }), async (r
       valid_for_username: result.valid_for_username,
       valid_for_user_id: result.valid_for_user_id,
       scope: result.scope,
+      warning, // present only when we auto-recovered from the beta-disabled 400
       // Echo is derived from the SAME body we actually sent, so the inspector can never drift.
       echo: { endpoint: tokenEndpointPath(tokenType), requestBody: redactBody(buildTokenRequestBody(params)) },
     });

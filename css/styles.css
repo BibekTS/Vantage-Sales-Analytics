@@ -473,7 +473,7 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
   border-bottom: 1px solid var(--border);
 }
 .act-hdr span:not(:first-child), .act-row input { justify-self: center; }
-.act-name { font-size: 12.5px; color: var(--text-primary); }
+.act-name { font-size: 12.5px; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
 .act-row { border-bottom: 1px solid var(--border); }
 .act-row input { width: 15px; height: 15px; accent-color: var(--accent); }
 
@@ -626,6 +626,7 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
 .tl-t { color: var(--text-muted); }
 .tl-ok { color: var(--success); font-weight: 600; }
 .tl-bad { color: var(--danger); font-weight: 600; }
+.tl-warn { color: var(--warn, #b7791f); font-weight: 500; margin-top: 2px; white-space: normal; }
 
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 #toast-container {
@@ -643,6 +644,12 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
 .toast-warn    { border-left-color: var(--warn); }
 .toast-error   { border-left-color: var(--danger); }
 .toast-info    { border-left-color: var(--accent); }
+.toast-busy    { border-left-color: var(--accent); display: inline-flex; align-items: center; gap: 9px; }
+.toast-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid rgba(255,255,255,.28); border-top-color: #fff;
+  animation: cfb-spin .7s linear infinite;
+}
 
 /* ── Custom Liveboard filter bar ─────────────────────────────────────────── */
 .cfb {

@@ -328,9 +328,17 @@ async function mintToken(apply) {
     const res = await fetch(`${API_BASE}/api/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     try { window.__onApiCall?.({ scope: 'playground', method: 'POST', path: '/api/auth/token', status: res.status }); } catch (_) {}
     const data = await res.json();
-    if (!res.ok) { renderInspector({ requestBody: body, error: data.error || `HTTP ${res.status}`, response: data }); _log('Auth', `✗ ${data.error || res.status}`); return; }
+    if (!res.ok) {
+      const detail = upstreamDetail(data);
+      const msg = detail ? `${data.error || 'HTTP ' + res.status} — ${detail}` : (data.error || `HTTP ${res.status}`);
+      renderInspector({ requestBody: body, error: msg, response: data });
+      _log('Auth', `✗ ${msg}`);
+      return;
+    }
     renderInspector({ requestBody: data.echo?.requestBody || body, response: data });
-    _log('Auth', `✓ token minted for ${data.valid_for_username || body.username || '(default)'}`);
+    _log('Auth', data.warning
+      ? `⚠ token minted for ${data.valid_for_username || body.username || '(default)'} — ${data.warning}`
+      : `✓ token minted for ${data.valid_for_username || body.username || '(default)'}`);
     if (apply) {
       setState({ authType: 'TrustedAuthTokenCookieless' });
       document.getElementById('auth-select').value = 'TrustedAuthTokenCookieless';
@@ -341,6 +349,20 @@ async function mintToken(apply) {
     renderInspector({ requestBody: body, error: err.message });
     _log('Auth', `✗ ${err.message} — is the Node server running?`);
   }
+}
+
+// Dig the human-readable message out of ThoughtSpot's nested upstream error envelope, e.g.
+// { upstream: { error: { message: { debug: { debug: '["The JWT Beta endpoint is disabled…"]' } } } } }.
+function upstreamDetail(data) {
+  try {
+    const d = data?.upstream?.error?.message?.debug ?? data?.upstream?.error?.message ?? data?.upstream;
+    if (!d) return '';
+    let msg = (typeof d === 'string') ? d : (d.debug ?? d.message ?? '');
+    if (typeof msg === 'string' && msg.trim().startsWith('[')) {
+      try { const arr = JSON.parse(msg); if (Array.isArray(arr)) msg = arr.join(' '); } catch (_) {}
+    }
+    return typeof msg === 'string' ? msg : JSON.stringify(msg);
+  } catch (_) { return ''; }
 }
 
 // ── Inspector rendering (also called on every getAuthToken via window.__onAuthToken) ──
@@ -387,6 +409,11 @@ function appendLog(info) {
     const user = info.response?.valid_for_username || info.requestBody?.username || '(default)';
     const okEl = el('span', 'tl-ok'); okEl.textContent = '✓ minted';
     line.append(okEl, document.createTextNode(` for ${user}`));
+    if (info.response?.warning) {
+      // upstream/warning text is not trusted markup — textContent only.
+      const warnEl = el('div', 'tl-warn'); warnEl.textContent = `⚠ ${info.response.warning}`;
+      line.appendChild(warnEl);
+    }
   }
   log.insertBefore(line, log.firstChild);
 }
