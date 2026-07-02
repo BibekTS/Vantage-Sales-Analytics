@@ -216,6 +216,7 @@ export function doRender(section, config, callbacks, options = {}) {
       embed = new LiveboardEmbed('#ts-embed-container', {
         frameParams: {},
         liveboardV2: true,
+        isLiveboardMasterpiecesEnabled: true,
         liveboardId: config.liveboardId,
         hiddenActions,
         disabledActions,

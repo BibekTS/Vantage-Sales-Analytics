@@ -109,7 +109,7 @@ const DISPLAY = {
     ['coverAndFilterOptionInPDF', 'PDF cover/filter options', false],
     ['isLiveboardXLSXCSVDownloadEnabled', 'Enable XLSX + CSV download', false],
     ['isContinuousLiveboardPDFEnabled', 'Enable continuous PDF', false],
-    ['isLiveboardMasterpiecesEnabled', 'Styling & grouping (Masterpieces)', false],
+    ['isLiveboardMasterpiecesEnabled', 'Styling & grouping (Masterpieces)', true],
     ['isEnhancedFilterInteractivityEnabled', 'Enhanced filter interactivity', false],
     ['isCentralizedLiveboardFilterUXEnabled', 'Centralized filter UX (v2)', false],
   ],
@@ -157,7 +157,7 @@ const HINTS = {
   coverAndFilterOptionInPDF: 'Add checkboxes in Download-as-PDF to include/exclude the cover page and filters page.',
   isLiveboardXLSXCSVDownloadEnabled: 'Add XLSX + CSV to the Liveboard-level Download modal. Without this, the embed shows only PDF. Needs cluster 26.5.0.cl+.',
   isContinuousLiveboardPDFEnabled: 'Add the Continuous-PDF option (one long page matching the on-screen layout) to the Liveboard Download modal. Needs cluster 26.5.0.cl+.',
-  isLiveboardMasterpiecesEnabled: 'Enable the new Liveboard styling & grouping (“Masterpieces”) layout.',
+  isLiveboardMasterpiecesEnabled: 'Enable the new Liveboard styling & grouping (“Masterpieces”) layout. On by default; toggle off to render the classic layout.',
   isEnhancedFilterInteractivityEnabled: 'Enable the enhanced, more responsive filter interactions on the Liveboard.',
   isCentralizedLiveboardFilterUXEnabled: 'New centralized filter UX (v2): one modal to manage all filters. Must also be enabled by ThoughtSpot Support.',
   // fullapp
@@ -183,6 +183,9 @@ const customActionRegistry = {}; // id -> { type, label, webhook, urlTemplate, d
 // Id of the app-injected "Download invoice pdf" viz-menu action (see buildEmbedCustomActions +
 // handleInvoicePdf). Override with window.TS_PDF_ACTION_ID to match a TS-side action id instead.
 const PDF_ACTION_ID = window.TS_PDF_ACTION_ID || 'download-invoice-pdf';
+// Id of the app-injected "Date" PRIMARY toolbar button (host-side date filter). Gated by
+// state.dateBtn.enabled; the CustomAction dispatcher routes it to openDatePicker().
+const DATE_ACTION_ID = '__date_filter';
 let editingActionId = null;      // id of the custom action currently loaded into the form for editing
 let lastSaved = null;            // { name, guid, at } — most recent EmbedEvent.Save this session
 let drillParent = null;          // { liveboardId } — set while drilled into a detail board (Q4)
@@ -998,6 +1001,22 @@ function sectionDisplay(s) {
       c.appendChild(toggleField(label, cur, v => setFlag(key, v, def), hint));
     }
   });
+  // App-injected "Date" PRIMARY button (not a native embed flag): enable/disable + target column.
+  // Toggling re-renders so the SDK picks up the added/removed customAction at init.
+  if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) {
+    const db = s.dateBtn || { enabled: false, column: 'Order Date' };
+    if (db.enabled) active++;
+    c.appendChild(el('div', 'sub-lbl', 'Date filter button'));
+    c.appendChild(toggleField('Show “Date” primary button', db.enabled, v => {
+      setState({ dateBtn: { ...getState().dateBtn, enabled: v } });
+      render();
+    }, 'Adds a Primary button on the liveboard toolbar. Clicking it opens a Today / On-a-specific-date chooser and applies a runtime filter — sidestepping the native date dialog and its Between/Yesterday default. Off by default.'));
+    if (db.enabled) {
+      c.appendChild(textField('Filter column', db.column, v => {
+        setState({ dateBtn: { ...getState().dateBtn, column: v || 'Order Date' } });
+      }, 'Order Date'));
+    }
+  }
   return accordion('Display options', active, c);
 }
 function setFlag(key, value, def) {
@@ -1095,6 +1114,18 @@ function buildEmbedCustomActions(s) {
       id: PDF_ACTION_ID,
       name: 'Download invoice pdf',
       position: CustomActionsPosition.MENU,                   // liveboard "…" (More) overflow menu
+      target: CustomActionTarget.LIVEBOARD,
+    });
+  }
+  // "Date" — a PRIMARY toolbar button (host-side date filter). Only injected when enabled in Display
+  // options. The CustomAction dispatcher routes DATE_ACTION_ID → openDatePicker(), which applies
+  // Today / a specific date as a runtime filter — the host-side control that sidesteps the native
+  // date dialog and its un-presettable Between/Yesterday default.
+  if (lbish && s.dateBtn?.enabled) {
+    actions.push({
+      id: DATE_ACTION_ID,
+      name: 'Date',
+      position: CustomActionsPosition.PRIMARY,                // visible primary button on the toolbar
       target: CustomActionTarget.LIVEBOARD,
     });
   }
@@ -1268,6 +1299,106 @@ function openExportPicker() {
   const go = el('button', 'sec-apply', '⬇ Export'); go.type = 'button';
   go.addEventListener('click', async () => { const ok = await performReportExport(opts, go); if (ok) close(); });
   foot.append(cancel, go);
+
+  panel.append(head, body, foot);
+  modal.append(scrim, panel);
+  document.body.appendChild(modal);
+}
+
+// ── "Date" primary custom action → host-side date filter ──────────────────────
+// The PRIMARY "Date" toolbar button (injected when Display options › "Show Date primary button" is
+// on) routes here. It applies Today / a specific date as a runtime filter, so the value is fully
+// host-controlled — no native date dialog, no un-presettable Between/Yesterday default.
+
+// Local YYYY-MM-DD for "today" (matches what an <input type="date"> shows).
+function todayISO() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// Apply (iso = 'YYYY-MM-DD') or clear (iso = null) an "On this date" runtime filter on `column`.
+// UpdateRuntimeFilters REPLACES the whole set, so we resend existing runtime/filter-bar filters
+// (minus this column) alongside it. Date values go as epoch SECONDS — ThoughtSpot's date runtime-
+// filter format — at local midnight, so "Today" is recomputed fresh on each click.
+function applyDateFilter(column, iso) {
+  if (!currentEmbed) { toast('Render a liveboard first.'); return; }
+  const base = buildParentRuntimeFilters().filter(f => f.columnName !== column);
+  let logVal = 'cleared';
+  if (iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const epoch = Math.floor(new Date(y, m - 1, d).getTime() / 1000);
+    base.push({ columnName: column, operator: RuntimeFilterOp.EQ, values: [String(epoch)] });
+    logVal = `EQ ${iso} (epoch ${epoch})`;
+  }
+  try {
+    currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, base);
+    logEvent('CustomAction', `Date filter → ${column} ${logVal}`);
+    toast(iso ? `Date filter: ${column} on ${iso}` : 'Date filter cleared', 'success');
+  } catch (e) {
+    logEvent('CustomAction', `✗ Date filter: ${e.message}`);
+    toast('Could not apply date filter.', 'error');
+  }
+}
+
+function openDatePicker() {
+  const s = getState();
+  if (!currentEmbed) { toast('Render a liveboard first.'); return; }
+  const column = (s.dateBtn?.column || 'Order Date').trim() || 'Order Date';
+  document.getElementById('date-modal')?.remove();
+
+  let mode = 'today';           // 'today' | 'on'
+  let onDate = todayISO();
+
+  const modal = el('div', 'modal'); modal.id = 'date-modal';
+  const scrim = el('div', 'modal-scrim');
+  const panel = el('div', 'modal-panel modal-panel--center');
+  const close = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+  scrim.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+
+  // Head — column via textContent (it's serialized into the untrusted #s= hash, so never innerHTML it).
+  const head = el('div', 'modal-head');
+  const htxt = el('div');
+  htxt.appendChild(el('div', 'modal-title', 'Date filter'));
+  const sub = el('div', 'modal-sub');
+  const strong = document.createElement('strong'); strong.textContent = column;
+  sub.append('Applies to ', strong, ' via HostEvent.UpdateRuntimeFilters.');
+  htxt.appendChild(sub);
+  const xbtn = el('button', 'modal-close', '✕'); xbtn.type = 'button'; xbtn.addEventListener('click', close);
+  head.append(htxt, xbtn);
+
+  const body = el('div', 'modal-body');
+  const renderBody = () => {
+    body.innerHTML = '';
+    body.appendChild(enumSelect('When', mode, [
+      { value: 'today', label: 'Today (recomputed on each click)' },
+      { value: 'on', label: 'On a specific date' },
+    ], v => { mode = v; renderBody(); }));
+    if (mode === 'on') {
+      const fld = el('div', 'fld');
+      fld.appendChild(el('label', 'fld-lbl', 'Date'));
+      const inp = el('input', 'inp'); inp.type = 'date'; inp.value = onDate;
+      inp.addEventListener('change', () => { onDate = inp.value; });
+      fld.appendChild(inp);
+      body.appendChild(fld);
+    }
+  };
+  renderBody();
+
+  const foot = el('div', 'modal-foot');
+  const clear = el('button', 'sec-apply ghost', 'Clear'); clear.type = 'button';
+  clear.addEventListener('click', () => { applyDateFilter(column, null); close(); });
+  const cancel = el('button', 'sec-apply ghost', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
+  const go = el('button', 'sec-apply', 'Apply'); go.type = 'button';
+  go.addEventListener('click', () => {
+    const iso = mode === 'today' ? todayISO() : onDate;
+    if (!iso) { toast('Pick a date.'); return; }
+    applyDateFilter(column, iso);
+    close();
+  });
+  foot.append(clear, cancel, go);
 
   panel.append(head, body, foot);
   modal.append(scrim, panel);
@@ -2542,6 +2673,8 @@ window.__onCustomAction = async (payload) => {
   // (Created in the TS UI and scoped to the invoice viz — not injected by the SDK, so it
   // is not in customActionRegistry. payload.answerService gives us the underlying rows.)
   if (id === PDF_ACTION_ID) { await handleInvoicePdf(payload); return; }
+  // "Date" primary button → open the host-side chooser (Today / On a specific date).
+  if (id === DATE_ACTION_ID) { openDatePicker(); return; }
   const reg = customActionRegistry[id];
   if (!reg) return;
   const row = extractRow(payload);
@@ -2753,13 +2886,14 @@ function generateCode() {
   const lbishSection = ['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section);
   const exportMenu = lbishSection && s.exportOpts?.menuAction;
   const pickerMenu = lbishSection && s.exportOpts?.pickerAction;
+  const dateBtn = lbishSection && s.dateBtn?.enabled;
   const importNames = ['init', 'AuthType', embedCls, 'EmbedEvent'];
-  if (s.customActions.length || exportMenu || pickerMenu) importNames.push('CustomActionsPosition', 'CustomActionTarget');
+  if (s.customActions.length || exportMenu || pickerMenu || dateBtn) importNames.push('CustomActionsPosition', 'CustomActionTarget');
   const cfbActiveFilters = s.section === 'liveboard-custom'
     ? Object.entries(cfbSelected).filter(([, v]) => v && v.length)
     : [];
   const drillAction = s.customActions.find(a => a.type === 'drill');
-  if (s.activeFilters.length || cfbActiveFilters.length || drillAction) importNames.push('HostEvent', 'RuntimeFilterOp');
+  if (s.activeFilters.length || cfbActiveFilters.length || drillAction || dateBtn) importNames.push('HostEvent', 'RuntimeFilterOp');
   if (hiddenActionKeys(s).length || s.disabledActions.length) importNames.push('Action');
   if (s.section === 'fullapp') importNames.push('Page');
   if (s.section === 'ai-highlights') importNames.push('HostEvent');
@@ -2793,21 +2927,28 @@ function generateCode() {
   if (s.section === 'search') { opt.push(`  dataSources: ['${esc(s.worksheetId)}'],`); if (s.searchTokenString) opt.push(`  searchOptions: { searchTokenString: '${esc(s.searchTokenString)}', executeSearch: ${s.executeSearch} },`); }
   if (s.section === 'nlsearch') opt.push(`  dataSources: ['${esc(s.worksheetId)}'],`);
   if (s.section === 'spotter') opt.push(`  worksheetId: '${esc(s.worksheetId)}',`);
-  if (s.section === 'liveboard' || s.section === 'liveboard-custom' || s.section === 'ai-highlights') opt.push('  liveboardV2: true,', `  liveboardId: '${esc(s.liveboardId)}',`);
+  // Masterpieces is on by default; the flags loop below emits the explicit `false` when it's toggled off.
+  const masterpiecesOn = (s.flags[s.section] || {}).isLiveboardMasterpiecesEnabled !== false;
+  if (s.section === 'liveboard' || s.section === 'liveboard-custom' || s.section === 'ai-highlights') {
+    opt.push('  liveboardV2: true,');
+    if (masterpiecesOn) opt.push('  isLiveboardMasterpiecesEnabled: true,');
+    opt.push(`  liveboardId: '${esc(s.liveboardId)}',`);
+  }
   if (s.section === 'viz') {
     if (s.answerId) opt.push(`  answerId: '${esc(s.answerId)}',`, '  hideSearchBar: true,');
-    else opt.push('  liveboardV2: true,', `  liveboardId: '${esc(s.liveboardId)}',`, `  vizId: '${esc(s.vizId)}',`);
+    else opt.push('  liveboardV2: true,', '  isLiveboardMasterpiecesEnabled: true,', `  liveboardId: '${esc(s.liveboardId)}',`, `  vizId: '${esc(s.vizId)}',`);
   }
   if (s.section === 'fullapp') { const pid = (s.flags.fullapp || {}).pageId || 'Home'; opt.push('  showPrimaryNavbar: false,', `  pageId: Page.${pid},`); }
-  Object.entries(s.flags[s.section] || {}).forEach(([k, v]) => { if (k === 'pageId') return; opt.push(`  ${k}: ${JSON.stringify(v)},`); });
+  Object.entries(s.flags[s.section] || {}).forEach(([k, v]) => { if (k === 'pageId') return; if (k === 'isLiveboardMasterpiecesEnabled' && v === true) return; opt.push(`  ${k}: ${JSON.stringify(v)},`); });
   const hiddenKeys = hiddenActionKeys(s);
   if (hiddenKeys.length) opt.push(`  hiddenActions: [${hiddenKeys.map(a => `Action.${a}`).join(', ')}],`);
   if (s.disabledActions.length) opt.push(`  disabledActions: [${s.disabledActions.map(a => `Action.${a}`).join(', ')}],`);
-  if (s.customActions.length || exportMenu || pickerMenu) {
+  if (s.customActions.length || exportMenu || pickerMenu || dateBtn) {
     opt.push('  customActions: [');
     s.customActions.forEach(a => opt.push(`    { id: '${esc(a.id)}', name: '${esc(a.label)}', position: CustomActionsPosition.${a.pos || 'PRIMARY'}, target: CustomActionTarget.${a.target || 'LIVEBOARD'} },`));
     if (exportMenu) opt.push(`    { id: 'export', name: '${esc(s.exportOpts.actionLabel || 'Preconfigured pdf download')}', position: CustomActionsPosition.MENU, target: CustomActionTarget.LIVEBOARD },`);
     if (pickerMenu) opt.push(`    { id: 'export-customize', name: '${esc(s.exportOpts.pickerLabel || 'Customize Export')}', position: CustomActionsPosition.MENU, target: CustomActionTarget.LIVEBOARD },`);
+    if (dateBtn) opt.push(`    { id: '${DATE_ACTION_ID}', name: 'Date', position: CustomActionsPosition.PRIMARY, target: CustomActionTarget.LIVEBOARD },`);
     opt.push('  ],');
   }
   if (s.runtimeParameters.length) { opt.push('  runtimeParameters: ['); s.runtimeParameters.forEach(p => opt.push(`    { name: '${esc(p.name)}', value: '${esc(p.value)}' },`)); opt.push('  ],'); }
@@ -2835,6 +2976,20 @@ function generateCode() {
     if (exportMenu) L.push("  if (payload.id === 'export') return exportLiveboard(); // the Liveboard-menu Export action");
     if (pickerMenu) L.push("  if (payload.id === 'export-customize') return openExportDialog(); // your UI: let the user pick options, then export");
     L.push('  console.log(payload.id, payload.data);');
+    L.push('});');
+  }
+  if (dateBtn) {
+    const col = esc(s.dateBtn?.column || 'Order Date');
+    L.push('');
+    L.push('// "Date" PRIMARY button → apply Today / a specific date as a runtime filter. Host-controlled,');
+    L.push('// so there is no native date-dialog default (Between/Yesterday) to fight. Replaces the whole set.');
+    L.push('embed.on(EmbedEvent.CustomAction, (payload) => {');
+    L.push(`  if (payload.id !== '${DATE_ACTION_ID}') return;`);
+    L.push('  const iso = prompt(\'Date (YYYY-MM-DD)\', new Date().toISOString().slice(0, 10)); // swap for your own UI');
+    L.push('  if (!iso) return;');
+    L.push('  const [y, m, d] = iso.split(\'-\').map(Number);');
+    L.push('  const epoch = Math.floor(new Date(y, m - 1, d).getTime() / 1000); // TS date runtime-filter = epoch seconds');
+    L.push(`  embed.trigger(HostEvent.UpdateRuntimeFilters, [{ columnName: '${col}', operator: RuntimeFilterOp.EQ, values: [String(epoch)] }]);`);
     L.push('});');
   }
   if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) {

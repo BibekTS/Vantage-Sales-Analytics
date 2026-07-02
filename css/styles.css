@@ -90,6 +90,11 @@ button { font-family: inherit; cursor: pointer; }
   box-shadow: 0 2px 8px rgba(0,201,222,.3);
 }
 .tb-name { color: var(--navy); }
+.tb-beta {
+  font-size: 10px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 1px 7px; line-height: 1.4;
+}
 
 .tb-connect { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 720px; }
 .tb-host { flex: 1; min-width: 220px; }
@@ -166,6 +171,8 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
 .rail-foot { padding: 8px; border-top: 1px solid var(--border); margin-top: 8px; }
 .rail-foot a { font-size: 12px; color: var(--text-muted); text-decoration: none; }
 .rail-foot a:hover { color: var(--accent); }
+.rail-credit { margin-top: 8px; font-size: 10.5px; line-height: 1.45; color: var(--text-muted); }
+.rail-credit-name { font-weight: 600; color: var(--text-primary); }
 
 /* Rail hover tooltip — explains what each embed does. Body-anchored + fixed so
    it isn't clipped by #rail's overflow. */

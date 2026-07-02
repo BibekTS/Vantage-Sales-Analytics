@@ -69,6 +69,13 @@ export function defaultState() {
       pickerAction: true,             // add a "Customize Export" action that opens a runtime options dialog
       pickerLabel: 'Customize Export', // label of that dialog-opening menu action
     },
+    // "Date" PRIMARY custom-action button — a host-side date filter (Today / On a specific date)
+    // applied via UpdateRuntimeFilters. Bypasses the native date dialog, whose default operator
+    // (Between/Yesterday) the SDK can't preset. Off by default; toggled in Display options.
+    dateBtn: {
+      enabled: false,
+      column: 'Order Date',           // runtime-filter target column
+    },
     styles: { variables: {}, rules: {} },
     // trusted-auth claims (NON-secret) — the token-claims playground
     auth: {
@@ -286,6 +293,13 @@ function sanitize(raw) {
     };
   }
 
+  if (has('dateBtn') && raw.dateBtn && typeof raw.dateBtn === 'object') {
+    out.dateBtn = {
+      enabled: bool(raw.dateBtn.enabled),
+      column: str(raw.dateBtn.column, 256) || 'Order Date',
+    };
+  }
+
   if (has('styles')) out.styles = {
     variables: cleanMap(raw.styles?.variables, v => str(v, 512)),
     rules: cleanMap(raw.styles?.rules, decls => cleanMap(decls, v => str(v, 512))),
@@ -329,6 +343,7 @@ function mergeKnown(base, loaded) {
   out.styles = { variables: {}, rules: {}, ...(loaded.styles || {}) };
   out.flags = { ...(loaded.flags || {}) };
   out.exportOpts = { ...base.exportOpts, ...(loaded.exportOpts || {}) };
+  out.dateBtn = { ...base.dateBtn, ...(loaded.dateBtn || {}) };
   return out;
 }
 
