@@ -28,6 +28,14 @@ const EMBEDS = [
 ];
 const META = Object.fromEntries(EMBEDS.map(e => [e.id, e]));
 
+// Rail grouping — mirrors how the SDK families the surfaces: the three search-driven
+// embeds, the four LiveboardEmbed flavours, and the two whole-app / no-iframe options.
+const RAIL_GROUPS = [
+  { label: 'Search & AI',  ids: ['search', 'nlsearch', 'spotter'] },
+  { label: 'Liveboards',   ids: ['liveboard', 'liveboard-custom', 'ai-highlights', 'viz'] },
+  { label: 'App & REST',   ids: ['fullapp', 'ai-insights'] },
+];
+
 // Plain-English "what does this do" blurbs shown on hover over each rail item.
 const EMBED_BLURBS = {
   search:           'Full search experience — build a query against a Worksheet/Model and get an auto-charted answer.',
@@ -437,17 +445,23 @@ function setStatus(state, text, detail) {
 function renderEmbedList() {
   const ul = $('#embed-list');
   ul.innerHTML = '';
-  EMBEDS.forEach(e => {
-    const li = el('li', 'embed-item');
-    li.dataset.id = e.id;
-    li.innerHTML = `<span class="ei-name">${e.name}</span><span class="ei-cls">${e.cls}</span>`;
-    const blurb = EMBED_BLURBS[e.id];
-    if (blurb) {
-      li.setAttribute('aria-label', `${e.name} — ${blurb}`);
-      attachRailTip(li, e.name, e.cls, blurb);
-    }
-    li.addEventListener('click', () => setActive(e.id));
-    ul.appendChild(li);
+  RAIL_GROUPS.forEach(g => {
+    const lbl = el('li', 'rail-group');
+    lbl.textContent = g.label;
+    ul.appendChild(lbl);
+    g.ids.forEach(id => {
+      const e = META[id];
+      const li = el('li', 'embed-item');
+      li.dataset.id = e.id;
+      li.innerHTML = `<span class="ei-name">${e.name}</span><span class="ei-cls">${e.cls}</span>`;
+      const blurb = EMBED_BLURBS[e.id];
+      if (blurb) {
+        li.setAttribute('aria-label', `${e.name} — ${blurb}`);
+        attachRailTip(li, e.name, e.cls, blurb);
+      }
+      li.addEventListener('click', () => setActive(e.id));
+      ul.appendChild(li);
+    });
   });
 }
 
@@ -625,7 +639,21 @@ function bindTopbar() {
     render();
   });
   $('#auth-config-btn').addEventListener('click', openAuthModal);
-  $('#reset-btn').addEventListener('click', () => {
+  // Reset wipes every applied option — arm on first click, act on the second,
+  // so a stray click next to "Best practices" can't silently destroy a setup.
+  const resetBtn = $('#reset-btn');
+  let resetDisarm = 0;
+  const disarmReset = () => { resetBtn.classList.remove('confirm'); resetBtn.textContent = 'Reset'; };
+  resetBtn.addEventListener('click', () => {
+    if (!resetBtn.classList.contains('confirm')) {
+      resetBtn.classList.add('confirm');
+      resetBtn.textContent = 'Reset all options?';
+      clearTimeout(resetDisarm);
+      resetDisarm = setTimeout(disarmReset, 2600);
+      return;
+    }
+    clearTimeout(resetDisarm);
+    disarmReset();
     resetState({ keepConnection: true });
     // Keep all cfb module state in sync with the cleared store.
     cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {};
@@ -740,6 +768,15 @@ function renderInspector() {
   const s = getState();
   const body = $('#insp-body');
   body.innerHTML = '';
+  // Make the connection state legible from the panel itself: while disconnected the data
+  // pickers are disabled, so say why up front instead of leaving a dead-looking dropdown.
+  $('#inspector').dataset.connected = String(connected);
+  if (!connected) {
+    const off = el('div', 'insp-offline');
+    off.textContent = 'Not connected — options are browsable, but data objects load after you connect above.';
+    body.appendChild(off);
+  }
+  const groupLbl = (t) => el('div', 'insp-group-lbl', t);
   if (s.section === 'ai-insights') {
     body.appendChild(sectionObject(s));         // Worksheet / Model picker (the metadata_identifier)
     body.appendChild(sectionAiControls(s));
@@ -751,15 +788,20 @@ function renderInspector() {
     aiNote.textContent = 'Renders the selected Liveboard, then fires HostEvent.AIHighlights to open the insights panel automatically. Requires AI Highlights + KPI anomaly detection enabled on the instance (admin); SDK ≥ 1.44 / TS ≥ 10.15.';
     body.appendChild(aiNote);
   }
+  // Sections are grouped by intent — Data (what renders), Behavior (how it acts),
+  // Appearance (how it looks) — so first-time users know where to start.
+  body.appendChild(groupLbl('Data'));
   body.appendChild(sectionObject(s));
-  if ((DISPLAY[s.section] || []).length) body.appendChild(sectionDisplay(s));
-  body.appendChild(sectionActions(s));
   if (s.section === 'liveboard-custom') body.appendChild(sectionCfbSetup());
   if (['liveboard', 'liveboard-custom', 'viz', 'fullapp', 'ai-highlights'].includes(s.section)) body.appendChild(sectionFilters(s));
   if (['search', 'liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) body.appendChild(sectionParams(s));
+  body.appendChild(groupLbl('Behavior'));
+  if ((DISPLAY[s.section] || []).length) body.appendChild(sectionDisplay(s));
+  body.appendChild(sectionActions(s));
   if (['liveboard', 'liveboard-custom', 'viz', 'fullapp', 'ai-highlights'].includes(s.section)) body.appendChild(sectionCustomActions(s));
   if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) body.appendChild(sectionExport(s));
   body.appendChild(sectionHostEvents(s));
+  body.appendChild(groupLbl('Appearance'));
   body.appendChild(sectionStyles(s));
   $('#insp-reset').onclick = () => {
     setState({ flags: { ...s.flags, [s.section]: {} }, hiddenActions: [], disabledActions: [] });
@@ -790,10 +832,10 @@ function accordion(title, count, contentEl, openByDefault = false) {
   return wrap;
 }
 
-function labeledSelect(label, value, options, onChange, hint) {
+function labeledSelect(label, value, options, onChange, hint, disabled = false) {
   const f = el('div', 'fld');
   f.appendChild(el('label', 'fld-lbl', label));
-  f.appendChild(customSelect(value, options, onChange));
+  f.appendChild(customSelect(value, options, onChange, disabled));
   if (hint) f.appendChild(el('div', 'fld-hint', hint));
   return f;
 }
@@ -802,12 +844,13 @@ function labeledSelect(label, value, options, onChange, hint) {
 // the selected row to the cursor, so long lists (e.g. all liveboards) overflow off the top of
 // the screen. This panel is position:fixed (so the inspector's overflow:auto can't clip it),
 // stays inside the viewport, flips up when there's no room below, and is searchable + scrollable.
-function customSelect(value, options, onChange) {
+function customSelect(value, options, onChange, disabled = false) {
   const wrap = el('div', 'sel');
   const current = options.find(o => o.id === value);
   const btn = el('button', 'sel-btn'); btn.type = 'button';
   btn.textContent = current ? current.name : '— select —';
   if (!current) btn.classList.add('sel-btn--placeholder');
+  if (disabled) { btn.disabled = true; wrap.appendChild(btn); return wrap; }
 
   const panel = el('div', 'sel-panel'); panel.hidden = true;
   const search = el('input', 'sel-search'); search.type = 'text'; search.placeholder = 'Search…';
@@ -887,7 +930,7 @@ function sectionObject(s) {
 
   if (needs === 'worksheet') {
     c.appendChild(labeledSelect('Worksheet / Model', s.worksheetId, discovered.worksheets,
-      v => { setState({ worksheetId: v }); renderInspector(); render(); }, 'Used by Search, NL Search, Spotter'));
+      v => { setState({ worksheetId: v }); renderInspector(); render(); }, 'Used by Search, NL Search, Spotter', !connected));
     if (s.section === 'search') {
       c.appendChild(textField('Pre-fill search query', s.searchTokenString, v => { setState({ searchTokenString: v }); render(); }, '[Sales Amount] [Region]'));
       c.appendChild(toggleField('Auto-execute search', s.executeSearch, v => { setState({ executeSearch: v }); render(); }));
@@ -907,7 +950,7 @@ function sectionObject(s) {
       .filter(lb => !lbTagFilter || (lb.tags || []).includes(lbTagFilter))
       .map(lb => ({ id: lb.id, name: lb.tags?.length ? `${lb.name}  ·  ${lb.tags.join(', ')}` : lb.name }));
     c.appendChild(labeledSelect('Liveboard', s.liveboardId, lbOptions,
-      async v => { setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {} }); cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {}; await loadViz(v); renderInspector(); render(); }));
+      async v => { setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {} }); cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {}; await loadViz(v); renderInspector(); render(); }, '', !connected));
   }
   if (needs === 'viz') {
     // Lazy-load vizzes when the inspector renders with a pre-selected liveboard but a cold
@@ -919,7 +962,7 @@ function sectionObject(s) {
     const vizzes = vizCache[s.liveboardId] || [];
     c.appendChild(labeledSelect('Visualization', s.vizId, vizzes,
       v => { setState({ vizId: v, answerId: '' }); renderInspector(); render(); },
-      !s.liveboardId ? 'Pick a liveboard first' : isLoading ? 'Loading…' : ''));
+      !s.liveboardId ? 'Pick a liveboard first' : isLoading ? 'Loading…' : '', !connected));
     // When discovery fails (CORS, auth, or no vizzes returned), show a GUID paste field
     // so users can still drive the embed without needing the REST call to succeed.
     if (s.liveboardId && !isLoading && vizzes.length === 0) {

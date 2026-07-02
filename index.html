@@ -30,13 +30,16 @@
       </select>
       <button id="connect-btn" class="tb-btn tb-btn-primary">Connect</button>
       <button id="auth-config-btn" class="tb-btn" hidden title="Configure trusted-auth token claims">Token claims…</button>
+      <span id="conn-status" class="tb-status" data-state="idle">Not connected</span>
     </div>
 
     <div class="tb-right">
-      <span id="conn-status" class="tb-status" data-state="idle">Not connected</span>
+      <a id="docs-link" class="tb-icon-btn" href="https://developers.thoughtspot.com/docs/" target="_blank" rel="noopener"
+         title="ThoughtSpot Visual Embed SDK documentation">SDK docs ↗</a>
       <a id="docs-btn" class="tb-icon-btn" href="docs/tse-best-practices.html" target="_blank" rel="noopener"
          title="ThoughtSpot Embedded — best-practices compendium (auth, ABAC/RLS, hardening, embed surface)">Best practices</a>
       <button id="share-btn" class="tb-icon-btn" title="Copy a shareable link to the current setup" hidden>Share</button>
+      <span class="tb-div" aria-hidden="true"></span>
       <button id="reset-btn" class="tb-icon-btn tb-reset" title="Reset all applied options">Reset</button>
     </div>
   </header>
@@ -46,11 +49,9 @@
 
     <!-- Embed type rail -->
     <nav id="rail" aria-label="Embed types">
-      <div class="rail-lbl">Embeds</div>
       <ul id="embed-list"></ul>
       <div class="rail-spacer"></div>
       <div class="rail-foot">
-        <a id="docs-link" href="https://developers.thoughtspot.com/docs/" target="_blank" rel="noopener">SDK docs ↗</a>
         <div class="rail-credit">
           Built by<br>
           <span class="rail-credit-name">Bibek Shrestha, Solutions Architect (PS)</span>
@@ -90,7 +91,30 @@
           <div class="st st-not-connected">
             <div class="st-icon">⚓</div>
             <div class="st-title">Connect a ThoughtSpot instance</div>
-            <div class="st-sub">Enter your instance URL in the bar above and click Connect. Browser-session auth uses your existing ThoughtSpot login.</div>
+            <div class="st-sub">Browser-session auth uses your existing ThoughtSpot login — no keys needed.</div>
+            <div class="st-steps">
+              <div class="st-step st-step--current">
+                <span class="st-step-n">1</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Connect</div>
+                  <div class="st-step-d">Enter your instance URL in the bar above and click Connect.</div>
+                </div>
+              </div>
+              <div class="st-step">
+                <span class="st-step-n">2</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Pick a data object</div>
+                  <div class="st-step-d">Choose a Worksheet or Liveboard in the options panel on the right.</div>
+                </div>
+              </div>
+              <div class="st-step">
+                <span class="st-step-n">3</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Tweak &amp; copy the code</div>
+                  <div class="st-step-d">Adjust options live, then grab runnable SDK code from the bottom panel.</div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="st st-not-logged-in">
             <div class="st-icon">🔒</div>
@@ -113,6 +137,29 @@
             <div class="st-icon">◎</div>
             <div class="st-title" id="needs-title">Pick a data object</div>
             <div class="st-sub" id="needs-sub">Choose what to display from the Object section in the inspector.</div>
+            <div class="st-steps">
+              <div class="st-step st-step--done">
+                <span class="st-step-n">✓</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Connected</div>
+                  <div class="st-step-d">Your instance is reachable and your session is verified.</div>
+                </div>
+              </div>
+              <div class="st-step st-step--current">
+                <span class="st-step-n">2</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Pick a data object</div>
+                  <div class="st-step-d">Open “Data object” in the options panel on the right.</div>
+                </div>
+              </div>
+              <div class="st-step">
+                <span class="st-step-n">3</span>
+                <div class="st-step-b">
+                  <div class="st-step-t">Tweak &amp; copy the code</div>
+                  <div class="st-step-d">Adjust options live, then grab runnable SDK code from the bottom panel.</div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="st st-loading">
             <div class="st-spinner"></div>
@@ -162,7 +209,7 @@
           <div id="insp-title" class="insp-title">Search Data</div>
           <div id="insp-badge" class="insp-badge">SearchEmbed</div>
         </div>
-        <button id="insp-reset" class="insp-reset" title="Reset options for this embed">↺</button>
+        <button id="insp-reset" class="insp-reset" title="Reset options for this embed" aria-label="Reset options for this embed">↺</button>
       </div>
       <div id="insp-body" class="insp-body"></div>
     </aside>
