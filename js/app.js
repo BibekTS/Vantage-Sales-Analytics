@@ -66,10 +66,10 @@ const ACTIONS = {
   nlsearch: ['Edit', 'Share'],
   spotter:  ['Share', 'Pin', 'SpotIQAnalyze'],
   liveboard: [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
+    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
   viz:      [...VIZ_DOWNLOAD_ACTIONS, 'Share', 'Pin', 'Explore', 'DrillDown', 'SpotIQAnalyze'],
   fullapp:  [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
+    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
 };
 ACTIONS['liveboard-custom'] = ACTIONS.liveboard;
 ACTIONS['ai-highlights'] = ACTIONS.liveboard;
@@ -87,6 +87,7 @@ const ACTION_HINTS = {
   DownloadAsXlsx: 'Answer/viz-level: Download › XLSX on an individual Answer/visualization.',
   LiveboardUsers: 'Liveboard header: the strip of viewer avatars at the top (people the board is shared with / who have access — “recently visited / social proof”). Hide to remove those faces. Also toggleable in Display options.',
   LiveboardInfo: 'Liveboard header: the “Show Liveboard details” menu item (author + created/updated timestamps). Opens a panel; not shown inline on the board.',
+  MakeACopy: 'Liveboard header ⋯ menu: the “Make a copy” item that lets a viewer duplicate the whole board into their own editable copy. Hide to stop end users cloning the board.',
 };
 
 // Per-embed display flags (the old gear schema, kept as-is but now in the inspector).
