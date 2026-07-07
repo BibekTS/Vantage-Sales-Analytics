@@ -66,10 +66,10 @@ const ACTIONS = {
   nlsearch: ['Edit', 'Share'],
   spotter:  ['Share', 'Pin', 'SpotIQAnalyze'],
   liveboard: [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'SpotIQAnalyze'],
+    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
   viz:      [...VIZ_DOWNLOAD_ACTIONS, 'Share', 'Pin', 'Explore', 'DrillDown', 'SpotIQAnalyze'],
   fullapp:  [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'SpotIQAnalyze'],
+    'Edit', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
 };
 ACTIONS['liveboard-custom'] = ACTIONS.liveboard;
 ACTIONS['ai-highlights'] = ACTIONS.liveboard;
@@ -85,6 +85,8 @@ const ACTION_HINTS = {
   DownloadAsPdf: 'Answer/viz-level: Download › PDF on an individual Answer/visualization.',
   DownloadAsCsv: 'Answer/viz-level: Download › CSV on an individual Answer/visualization.',
   DownloadAsXlsx: 'Answer/viz-level: Download › XLSX on an individual Answer/visualization.',
+  LiveboardUsers: 'Liveboard header: the strip of viewer avatars at the top (people the board is shared with / who have access — “recently visited / social proof”). Hide to remove those faces. Also toggleable in Display options.',
+  LiveboardInfo: 'Liveboard header: the “Show Liveboard details” menu item (author + created/updated timestamps). Opens a panel; not shown inline on the board.',
 };
 
 // Per-embed display flags (the old gear schema, kept as-is but now in the inspector).
@@ -197,6 +199,17 @@ const DATE_ACTION_ID = '__date_filter';
 let editingActionId = null;      // id of the custom action currently loaded into the form for editing
 let lastSaved = null;            // { name, guid, at } — most recent EmbedEvent.Save this session
 let drillParent = null;          // { liveboardId } — set while drilled into a detail board (Q4)
+let authFailed = false;          // set when the embed reports AuthFailure/NoCookie; keeps the
+                                 // not-logged-in overlay pinned so a late Load event can't hide it
+// Personal liveboards — the connected user's identity (for scoping copy discovery) + a one-shot flag
+// so a freshly-created copy opens straight into Edit mode. Captured in connect(); non-fatal if absent.
+let currentUserName = '';        // display name (for copy titles)
+let currentUserLogin = '';       // login id or GUID → created_by_user_identifiers when discovering copies
+let justCreatedCopyId = '';      // set by personalizeFlow(); render()'s onDone triggers HostEvent.Edit once
+let plbArmedDelete = '';         // copy id whose ✕ is armed for a confirm-click (inline delete)
+let plbArmedTimer = null;        // disarm timer for the above
+let plbDiscovering = false;      // true while refreshPersonalCopies() is in flight (shows a skeleton tab)
+let plbClickTimer = null;        // debounces a copy-tab click so a dblclick can cancel it (rename vs switch)
 let pendingHostConfirm = false;  // a shared-link (#s=) host is awaiting an explicit Connect click
 let tokenServerAvailable = true; // Trusted Auth mints via the local token server; probed on boot (see probeTokenServer)
 
@@ -427,9 +440,14 @@ async function connect({ silent = false } = {}) {
   }
   connected = true;
   setStatus('ok', `${org.userName}${org.orgName ? ' · ' + org.orgName : ''}`);
+  currentUserName = org.userName || '';
 
+  currentUserLogin = ''; // re-resolved (scoped to this session's identity) by refreshPersonalCopies()
   const objs = await Discovery.discoverObjects(host);
   if (objs.ok) discovered = { worksheets: objs.worksheets, liveboards: objs.liveboards };
+  // Personal liveboards: repopulate the current board's copies (non-fatal — refreshPersonalCopies
+  // resolves the scoping identity itself and stays empty if that or the search fails).
+  if (getState().personalLb?.enabled) refreshPersonalCopies();
   renderInspector();
   render();
 }
@@ -437,8 +455,11 @@ async function connect({ silent = false } = {}) {
 function setStatus(state, text, detail) {
   const e = $('#conn-status');
   e.dataset.state = state;
-  e.textContent = text;
-  if (detail) e.title = detail; else e.removeAttribute('title');
+  // Text goes in the .tb-status-txt span so it can ellipsize; the dot is a ::before.
+  const txt = e.querySelector('.tb-status-txt') || e;
+  txt.textContent = text;
+  // Always expose the full value on hover — the pill may truncate a long "user · org".
+  e.title = detail || text;
 }
 
 // ── Embed rail ──────────────────────────────────────────────────────────────
@@ -498,6 +519,7 @@ function setActive(id, { skipRender = false } = {}) {
   // Show/hide the website-native filter bar
   const cfb = $('#custom-filter-bar');
   if (cfb) cfb.hidden = id !== 'liveboard-custom';
+  renderPersonalStrip(); // show/hide the Personal-liveboards strip for this section
   renderInspector();
   if (!skipRender) render();
 }
@@ -518,6 +540,11 @@ function render() {
   // A normal render always exits any active drill-down (Q4) — drop the back bar and state.
   if (drillParent) { drillParent = null; hideDrillBar(); }
   const s = getState();
+  renderPersonalStrip(); // paint/refresh the Personal-liveboards tab strip on every render path
+  // fullHeight makes the SDK grow the iframe to the Liveboard's content height; the stage must then
+  // scroll and stop pinning the iframe to 100% (see the .full-height rules in styles.css). Drive
+  // that purely from the active section's flag so the CSS and the embed config never disagree.
+  $('#embed-area').classList.toggle('full-height', !!(s.flags[s.section] || {}).fullHeight);
   if (!s.host) { setOverlay('not-connected'); return; }
 
   const missing = needsMissing(s);
@@ -551,12 +578,21 @@ function render() {
 
   const fallback = setTimeout(() => { setOverlay('hidden'); logEvent('Info', 'Embed handed off — verify you are logged in at the host.'); }, 4000);
 
-  currentEmbed = doRender(s.section, buildConfig(), {
-    onDone() { clearTimeout(fallback); setOverlay('hidden'); applyLiveFilters(); if (getState().section === 'liveboard-custom') cfbBuild(); },
+  // Personal liveboards: when a copy tab is active, render THAT board (keep state.liveboardId = the
+  // Standard/source board so it stays tab #1 and copy discovery stays keyed to the source). Same
+  // clone-the-config pattern enterDrill() uses.
+  const cfg = buildConfig();
+  cfg.liveboardId = effectiveLiveboardId(s);
+
+  authFailed = false; // fresh render — clear any prior auth-failure latch
+  currentEmbed = doRender(s.section, cfg, {
+    onDone() { if (authFailed) return; clearTimeout(fallback); setOverlay('hidden'); applyLiveFilters(); if (getState().section === 'liveboard-custom') cfbBuild(); maybeOpenCreatedCopyForEdit(); },
     onError(msg) {
       clearTimeout(fallback);
       const str = typeof msg === 'string' ? msg : JSON.stringify(msg);
-      if (str === '__NO_COOKIE__') { setOverlay('not-logged-in'); return; }
+      // Auth failures (bad/expired token, blocked cookies) → the styled not-logged-in overlay,
+      // latched so a trailing Load event for TS's own "Not logged in" page can't clear it.
+      if (str === '__NO_COOKIE__' || str === '__AUTH_FAILURE__') { authFailed = true; setOverlay('not-logged-in'); return; }
       $('#error-sub').textContent = str;
       setOverlay('error');
     },
@@ -590,16 +626,32 @@ function setOverlay(state) {
   wrap.querySelectorAll('.st').forEach(e => e.classList.remove('active'));
   const e = wrap.querySelector(`.st-${state}`);
   if (e) e.classList.add('active');
+  if (state === 'not-connected') {
+    // The default copy assumes browser-session auth; trusted auth DOES need a key setup.
+    const sub = wrap.querySelector('.st-not-connected .st-sub');
+    if (sub) sub.textContent = getState().authType !== 'None'
+      ? 'Trusted-token auth mints sign-in tokens via the local Node server — a one-time secret-key setup. Open “Token claims…” in the top bar for the step-by-step guide.'
+      : 'Browser-session auth uses your existing ThoughtSpot login — no keys needed.';
+  }
   if (state === 'not-logged-in') {
     $('#login-link').href = getState().host || '#';
     const authType = getState().authType;
     const isTrusted = authType === 'TrustedAuthTokenCookieless' || authType === 'TrustedAuthToken';
     const title = $('#not-logged-in-title');
     const sub = $('#not-logged-in-sub');
-    if (title) title.textContent = isTrusted ? 'Token rejected' : 'Log in to ThoughtSpot first';
+    if (title) title.textContent = isTrusted ? 'Embed session not authenticated' : 'Log in to ThoughtSpot first';
     if (sub) sub.textContent = isTrusted
-      ? 'The minted token was rejected or has expired. Open Token claims… and Mint & apply a new token.'
+      ? 'ThoughtSpot rejected the trusted-auth token, so the embed has no session. Re-mint a fresh token from Token claims… (Mint & apply), then it reloads automatically.'
       : 'Browser-session auth needs an active login at the host. Open ThoughtSpot, sign in, then retry.';
+    // Swap the actions to match the auth mode: trusted auth is fixed by re-minting (Token
+    // claims…), not by signing in at the host — so promote that button and demote Retry to a
+    // secondary. Browser session keeps "Open ThoughtSpot ↗" + a primary Retry.
+    const loginLink = $('#login-link');
+    const claimsBtn = $('#open-claims-btn');
+    const retryBtn = $('#state-overlay .st-not-logged-in [data-act="retry"]');
+    if (loginLink) loginLink.hidden = isTrusted;
+    if (claimsBtn) claimsBtn.hidden = !isTrusted;
+    if (retryBtn) retryBtn.classList.toggle('st-btn-ghost', isTrusted);
   }
 }
 
@@ -608,6 +660,7 @@ function bindStateOverlay() {
     const act = ev.target.dataset.act;
     if (act === 'retry') connect();
     if (act === 'proceed') render();
+    if (act === 'open-claims') openAuthModal();
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
@@ -634,8 +687,10 @@ function bindTopbar() {
   $('#auth-select').addEventListener('change', e => {
     setState({ authType: e.target.value });
     $('#auth-config-btn').hidden = e.target.value === 'None';
-    applyConfig();
+    // Modal first — it carries the setup guide, and must appear even if the SDK
+    // re-init below throws (e.g. a malformed host typed into the top bar).
     if (e.target.value !== 'None') openAuthModal();
+    applyConfig();
     render();
   });
   $('#auth-config-btn').addEventListener('click', openAuthModal);
@@ -946,11 +1001,15 @@ function sectionObject(s) {
         v => { lbTagFilter = v; renderInspector(); },
         'Tags read live from metadata/search. Server-side uses tag_identifiers.'));
     }
+    // When Personal liveboards is on, hide the user's own copies (tagged with the scoping tag) from the
+    // SOURCE picker so they can't be personalized again — but keep the currently-selected board visible.
+    const plbTag = s.personalLb?.enabled ? (s.personalLb.tag || 'Personal') : '';
     const lbOptions = (discovered.liveboards || [])
       .filter(lb => !lbTagFilter || (lb.tags || []).includes(lbTagFilter))
+      .filter(lb => !plbTag || lb.id === s.liveboardId || !(lb.tags || []).includes(plbTag))
       .map(lb => ({ id: lb.id, name: lb.tags?.length ? `${lb.name}  ·  ${lb.tags.join(', ')}` : lb.name }));
     c.appendChild(labeledSelect('Liveboard', s.liveboardId, lbOptions,
-      async v => { setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {} }); cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {}; await loadViz(v); renderInspector(); render(); }, '', !connected));
+      async v => { setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {}, personalLb: { ...getState().personalLb, activeCopyId: '' } }); cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {}; await loadViz(v); await refreshPersonalCopies(); renderInspector(); render(); }, '', !connected));
   }
   if (needs === 'viz') {
     // Lazy-load vizzes when the inspector renders with a pre-selected liveboard but a cold
@@ -1044,6 +1103,27 @@ function sectionDisplay(s) {
       c.appendChild(toggleField(label, cur, v => setFlag(key, v, def), hint));
     }
   });
+  // "Show shared-with users" — the strip of viewer avatars in the Liveboard header: the people the
+  // board is shared with / who have viewed it (ThoughtSpot's "recently visited / social proof"
+  // users). This is the LiveboardUsers action (lives in hiddenActions), so the toggle controls
+  // hide/show and stays in sync with the LiveboardUsers row in Modify actions + the generated code.
+  // IMPORTANT: that strip ONLY renders in the compact header (isLiveboardCompactHeaderEnabled) — the
+  // default Masterpieces header never paints it. So when the action is visible but the compact
+  // header is off, we surface a one-click prompt to enable it, otherwise the toggle looks inert.
+  if (['liveboard', 'liveboard-custom', 'ai-highlights'].includes(s.section)) {
+    const usersHidden = s.hiddenActions.includes('LiveboardUsers');
+    const compactOn = flags.isLiveboardCompactHeaderEnabled === true;
+    if (usersHidden) active++;
+    c.appendChild(toggleField('Show shared-with users', !usersHidden,
+      v => toggleAction('hiddenActions', 'LiveboardUsers', !v),
+      'The viewer/shared-with avatars in the Liveboard header (ThoughtSpot’s “recently visited / social proof” users). Off hides the LiveboardUsers action. Note: this strip only renders in the compact header, and only when the board actually has viewer data and the feature is enabled on your cluster.'));
+    if (!usersHidden && !compactOn) {
+      c.appendChild(el('div', 'sec-note', 'These avatars only render in the compact header — the default header never shows them. Enable it to see them:'));
+      const cbtn = el('button', 'sec-add', '→ Enable compact header');
+      cbtn.addEventListener('click', () => { setFlag('isLiveboardCompactHeaderEnabled', true, false); renderInspector(); });
+      c.appendChild(cbtn);
+    }
+  }
   // App-injected "Date" PRIMARY button (not a native embed flag): enable/disable + target column.
   // Toggling re-renders so the SDK picks up the added/removed customAction at init.
   if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) {
@@ -1058,6 +1138,23 @@ function sectionDisplay(s) {
       c.appendChild(textField('Filter column', db.column, v => {
         setState({ dateBtn: { ...getState().dateBtn, column: v || 'Order Date' } });
       }, 'Order Date'));
+    }
+  }
+  // Personal liveboards — per-user editable copies shown as a tab strip above the board.
+  if (PLB_SECTIONS.includes(s.section)) {
+    const plb = s.personalLb || { enabled: false, tag: 'Personal' };
+    if (plb.enabled) active++;
+    c.appendChild(el('div', 'sub-lbl', 'Personal liveboards'));
+    c.appendChild(toggleField('Enable personal copies (tab strip)', plb.enabled, v => {
+      setState({ personalLb: { ...getState().personalLb, enabled: v, activeCopyId: '' } });
+      renderInspector();
+      render();
+      if (v) refreshPersonalCopies();
+    }, 'Adds a tab strip above the board: Standard | your copies | ＋ Personalize. Each “Personalize” makes a full, editable, user-owned clone (POST metadata/copyobject, 10.3.0.cl+), tagged so it’s re-discovered per user + per board. For saved filter/sort VIEWS instead of editable copies, the native Action.PersonalizedViewsDropdown is simpler.'));
+    if (plb.enabled) {
+      c.appendChild(textField('Scoping tag', plb.tag, v => {
+        setState({ personalLb: { ...getState().personalLb, tag: v || 'Personal' } });
+      }, 'Personal'));
     }
   }
   return accordion('Display options', active, c);
@@ -2705,6 +2802,20 @@ window.__onFilterChanged = (payload) => {
   logEvent('FilterChanged', JSON.stringify(payload?.data ?? payload).slice(0, 300));
 };
 
+// init()'s auth event emitter reports session-level auth here (AuthStatus.FAILURE / SUCCESS),
+// separate from per-embed EmbedEvent.AuthFailure. This is what fires when trusted auth mints a
+// token but ThoughtSpot still won't establish the iframe session — the "REST works (green pill)
+// but the embed shows TS's own 'Not logged in' page" case. FAILURE → show the styled overlay.
+window.__onAuthStatus = (status, reason) => {
+  if (status === 'FAILURE') {
+    authFailed = true; // latch so a trailing Load event can't clear the overlay (see render onDone)
+    logEvent('Auth', `⚠ Session not established${reason ? ` (${reason})` : ''} — ThoughtSpot rejected the embed login`);
+    setOverlay('not-logged-in');
+  } else if (status === 'SUCCESS') {
+    if (authFailed) { authFailed = false; logEvent('Auth', 'Embed session established'); setOverlay('hidden'); }
+  }
+};
+
 window.__onCustomAction = async (payload) => {
   const id = payload?.id ?? payload?.data?.id;
   logEvent('CustomAction', JSON.stringify(payload?.data ?? payload).slice(0, 200));
@@ -2869,9 +2980,10 @@ function enterDrill(drillId, filters) {
   showDrillBar(drillId, filters);
   logEvent('Drill', `→ ${drillId} with ${filters.length} carried filter(s): ${filters.map(f => `${f.columnName}=[${f.values.join(',')}]`).join('; ') || 'none'}`);
   const fallback = setTimeout(() => setOverlay('hidden'), 4000);
+  authFailed = false;
   currentEmbed = doRender('liveboard', cfg, {
-    onDone() { clearTimeout(fallback); setOverlay('hidden'); },
-    onError(msg) { clearTimeout(fallback); const str = typeof msg === 'string' ? msg : JSON.stringify(msg); if (str === '__NO_COOKIE__') { setOverlay('not-logged-in'); return; } $('#error-sub').textContent = str; setOverlay('error'); },
+    onDone() { if (authFailed) return; clearTimeout(fallback); setOverlay('hidden'); },
+    onError(msg) { clearTimeout(fallback); const str = typeof msg === 'string' ? msg : JSON.stringify(msg); if (str === '__NO_COOKIE__' || str === '__AUTH_FAILURE__') { authFailed = true; setOverlay('not-logged-in'); return; } $('#error-sub').textContent = str; setOverlay('error'); },
     onEvent: logEvent,
   }, {
     hiddenActions: getState().hiddenActions.map(k => Action[k]).filter(Boolean),
@@ -2916,6 +3028,271 @@ function showDrillBar(drillId, filters) {
 }
 function hideDrillBar() { const bar = $('#drill-bar'); if (bar) bar.remove(); }
 
+// ═══ PERSONAL LIVEBOARDS — per-user editable copies as a tab strip ════════════
+// End users make their own copy (or copies) of a standard liveboard via POST metadata/copyobject; the
+// copies live next to it as a tab strip and each is a full, user-owned, editable clone. Copies are
+// keyed by the SOURCE liveboard id (repeatable for any board) and scoped to the connected user
+// (multi-user by construction). state.liveboardId always stays the Standard/source board (tab #1);
+// only the RENDERED config points at the active copy — the enterDrill() clone-the-config pattern.
+const PLB_SECTIONS = ['liveboard', 'liveboard-custom', 'ai-highlights'];
+
+/** The liveboard id the embed should actually render: the active copy when one is selected, else Standard. */
+function effectiveLiveboardId(s) {
+  return (s.personalLb?.enabled && s.personalLb.activeCopyId) || s.liveboardId;
+}
+
+/** True when the tab strip should be visible (feature on, connected, a source board picked, not drilling). */
+function personalStripVisible(s) {
+  return !!(s.personalLb?.enabled && connected && !drillParent
+    && PLB_SECTIONS.includes(s.section) && s.liveboardId);
+}
+
+/** The compact tab label: an explicit nickname, else the title minus the "{stdName} — " prefix. */
+function copyLabel(c, stdName) {
+  if (c.label) return c.label;
+  const t = c.title || 'Copy';
+  const pre = stdName ? `${stdName} — ` : '';
+  return pre && t.startsWith(pre) ? t.slice(pre.length) : t;
+}
+
+/** Paint/refresh the tab strip: Standard (tab #1) · one tab per copy · ＋ Personalize (Standard only). */
+function renderPersonalStrip() {
+  const strip = $('#personal-lb-strip');
+  if (!strip) return;
+  const s = getState();
+  if (!personalStripVisible(s)) { strip.hidden = true; strip.innerHTML = ''; return; }
+  strip.hidden = false;
+  strip.innerHTML = '';
+
+  const active = s.personalLb.activeCopyId;
+  const copies = s.personalLb.copies[s.liveboardId] || [];
+  const stdName = discovered.liveboards.find(lb => lb.id === s.liveboardId)?.name || '';
+
+  // Tab #1 — always the Standard board.
+  const std = el('button', 'plb-tab plb-tab--standard' + (!active ? ' active' : ''));
+  const stdLbl = el('span', 'plb-tab-name'); stdLbl.textContent = 'Standard'; std.appendChild(stdLbl);
+  std.title = 'The shared standard liveboard';
+  std.addEventListener('click', () => switchPersonalTab(''));
+  strip.appendChild(std);
+
+  // One tab per copy: short label (nickname or derived), full title as tooltip, double-click to rename,
+  // inline two-click delete. Labels/titles are REST/user data → textContent, never innerHTML.
+  copies.forEach(c => {
+    const tab = el('button', 'plb-tab' + (c.id === active ? ' active' : ''));
+    tab.title = c.title || c.id;
+    const name = el('span', 'plb-tab-name'); name.textContent = copyLabel(c, stdName); tab.appendChild(name);
+    // Debounce the switch so a double-click can cancel it and rename in place (a switch re-renders the
+    // strip, which would otherwise detach this tab before the dblclick fires).
+    tab.addEventListener('click', () => {
+      clearTimeout(plbClickTimer);
+      plbClickTimer = setTimeout(() => switchPersonalTab(c.id), 200);
+    });
+    tab.addEventListener('dblclick', ev => {
+      clearTimeout(plbClickTimer);
+      ev.preventDefault(); ev.stopPropagation();
+      startRenameCopy(tab, name, c);
+    });
+
+    const armed = plbArmedDelete === c.id;
+    const x = el('span', 'plb-tab-close' + (armed ? ' armed' : ''));
+    x.textContent = armed ? 'Delete?' : '✕';
+    x.title = armed ? 'Click again to confirm delete' : 'Delete this copy';
+    x.addEventListener('click', ev => { ev.stopPropagation(); onDeleteClick(c); });
+    tab.appendChild(x);
+    strip.appendChild(tab);
+  });
+
+  // Skeleton placeholder while discovery is in flight (first paint after connect / board change).
+  if (plbDiscovering) strip.appendChild(el('span', 'plb-skel'));
+
+  // ＋ Personalize — only on Standard (no copies-of-copies). Full CTA only when there are no copies yet;
+  // once copies exist it shrinks to a quiet "＋" so it stops competing with the board's own controls.
+  if (!active) {
+    const hasCopies = copies.length > 0;
+    const add = el('button', 'plb-add' + (hasCopies ? '' : ' plb-add--cta'));
+    add.textContent = hasCopies ? '＋' : '＋ Personalize';
+    add.title = 'Make your own editable copy of this liveboard';
+    add.addEventListener('click', () => personalizeFlow(add));
+    strip.appendChild(add);
+  }
+
+  // Fade the right edge only when the tabs actually overflow the strip.
+  strip.classList.toggle('plb-strip--overflow', strip.scrollWidth > strip.clientWidth + 1);
+}
+
+/** Inline-rename a copy's tab: swap the label for a text input; commit on Enter/blur, cancel on Esc. */
+function startRenameCopy(tab, nameSpan, copy) {
+  if (tab.querySelector('.plb-rename-input')) return;
+  const stdName = discovered.liveboards.find(lb => lb.id === getState().liveboardId)?.name || '';
+  const input = el('input', 'plb-rename-input');
+  input.value = copyLabel(copy, stdName);
+  input.maxLength = 60;
+  nameSpan.replaceWith(input);
+  input.focus(); input.select();
+  let cancelled = false;
+  input.addEventListener('click', ev => ev.stopPropagation());
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancelled = true; renderPersonalStrip(); }
+  });
+  input.addEventListener('blur', () => { if (!cancelled) saveCopyLabel(copy.id, input.value.trim()); });
+}
+
+/** Persist a copy's display nickname (empty clears it → derived label shows). Local to this browser. */
+function saveCopyLabel(id, label) {
+  const s = getState();
+  const sourceId = s.liveboardId;
+  const list = (s.personalLb.copies[sourceId] || []).map(c => c.id === id ? { ...c, label } : c);
+  setState({ personalLb: { ...s.personalLb, copies: { ...s.personalLb.copies, [sourceId]: list } } });
+  logEvent('Personalize', `renamed ${id} → "${label || '(cleared)'}"`);
+  renderPersonalStrip();
+  refreshCode();
+}
+
+/** First ✕ click arms the tab (shows "Delete?"); a second click within 3s deletes it. */
+function onDeleteClick(copy) {
+  if (plbArmedDelete === copy.id) {
+    clearTimeout(plbArmedTimer);
+    plbArmedDelete = '';
+    deleteCopy(copy);
+    return;
+  }
+  plbArmedDelete = copy.id;
+  renderPersonalStrip();
+  clearTimeout(plbArmedTimer);
+  plbArmedTimer = setTimeout(() => { plbArmedDelete = ''; renderPersonalStrip(); }, 3000);
+}
+
+/** Switch the active tab (‘’ = Standard) and re-render the embed at the effective board. */
+function switchPersonalTab(copyId) {
+  const s = getState();
+  if ((s.personalLb.activeCopyId || '') === (copyId || '')) return; // no-op if already active
+  setState({ personalLb: { ...s.personalLb, activeCopyId: copyId } });
+  render();          // re-embeds with effectiveLiveboardId(); render() repaints the strip
+  refreshCode();
+}
+
+/** If a copy was just created, open it in Edit mode once it renders (the “personalize now” moment). */
+function maybeOpenCreatedCopyForEdit() {
+  if (!justCreatedCopyId) return;
+  const s = getState();
+  if (s.personalLb.activeCopyId !== justCreatedCopyId) { justCreatedCopyId = ''; return; }
+  justCreatedCopyId = '';
+  try { currentEmbed?.trigger(HostEvent.Edit); logEvent('HostEvent', 'Edit (new personal copy)'); }
+  catch (e) { logEvent('HostEvent', `✗ Edit: ${e.message}`); }
+}
+
+/** ＋ Personalize: copyobject → tag → cache + switch to the new copy → open it editable. */
+async function personalizeFlow(btn) {
+  const s = getState();
+  if (!s.host || !s.liveboardId) { toast('Connect and pick a liveboard first.'); return; }
+  if (s.personalLb.activeCopyId) { toast('Switch to the Standard board before personalizing.'); return; }
+  const sourceId = s.liveboardId;
+  const stdName = (discovered.liveboards.find(lb => lb.id === sourceId)?.name) || 'Liveboard';
+  const existing = s.personalLb.copies[sourceId] || [];
+  const who = currentUserName || 'me';
+  const title = `${stdName} — ${who} #${existing.length + 1}`;
+
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = '⋯ Creating'; }
+  const done = showBusy('Creating your personal copy…');
+  logEvent('Personalize', `copyobject ← ${sourceId} → "${title}"`);
+  try {
+    const cp = await Discovery.copyLiveboard(s.host, sourceId, title);
+    if (!cp.ok) {
+      done();
+      if (cp.status === 403) toast('Not allowed to copy this liveboard — you need at least view access. (copyobject needs 10.3.0.cl+.)', 'error');
+      else toast(`Copy failed: ${cp.error}`, 'error');
+      logEvent('Personalize', `✗ copyobject: ${cp.error}`);
+      return;
+    }
+    // Tag it (best-effort — keep the copy either way):
+    //  • Personal        → re-discoverable + excluded from the source-board picker.
+    //  • src:<sourceId>  → records WHICH board this is a copy of, so discovery attributes it by tag, not title.
+    const tag = s.personalLb.tag || 'Personal';
+    const srcTag = Discovery.sourceTag(sourceId);
+    const tagRes = await Discovery.assignTags(s.host, cp.id, [tag, srcTag]);
+    if (!tagRes.ok) logEvent('Personalize', `⚠ tags [${tag}, ${srcTag}] not assigned (${tagRes.error}) — copy kept; discovery falls back to owner+name.`);
+
+    // Update the per-source cache, switch to the new copy, and flag it to open editable on render.
+    const cur = getState();
+    const prior = cur.personalLb.copies[sourceId] || [];
+    const copies = [...prior, { id: cp.id, title, label: `Copy ${prior.length + 1}` }];
+    justCreatedCopyId = cp.id;
+    setState({ personalLb: { ...cur.personalLb, copies: { ...cur.personalLb.copies, [sourceId]: copies }, activeCopyId: cp.id } });
+    logEvent('Personalize', `✓ created ${cp.id}`);
+    done('✓ Personal copy created', 'success');
+    render();
+    refreshCode();
+  } catch (e) {
+    done(); toast(`Copy failed: ${e.message}`, 'error'); logEvent('Personalize', `✗ ${e.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deleteCopy(copy) {
+  const s = getState();
+  const sourceId = s.liveboardId;
+  const done = showBusy('Deleting copy…');
+  logEvent('Personalize', `delete ${copy.id}`);
+  const res = await Discovery.deleteLiveboard(s.host, copy.id);
+  if (!res.ok) { done(); toast(`Delete failed: ${res.error}`, 'error'); logEvent('Personalize', `✗ delete: ${res.error}`); return; }
+  const cur = getState();
+  const remaining = (cur.personalLb.copies[sourceId] || []).filter(c => c.id !== copy.id);
+  const wasActive = cur.personalLb.activeCopyId === copy.id;
+  setState({ personalLb: { ...cur.personalLb,
+    copies: { ...cur.personalLb.copies, [sourceId]: remaining },
+    activeCopyId: wasActive ? '' : cur.personalLb.activeCopyId } });
+  done('✓ Copy deleted', 'success');
+  render();      // if the active copy was deleted we land back on Standard
+  refreshCode();
+}
+
+/**
+ * Rebuild the current board's copy list from ThoughtSpot (owner + tag scoped), reconciled against the
+ * persisted cache + this board's naming prefix so only THIS source board's copies show. Runs on connect
+ * and whenever the source liveboard changes. Keeps the feature repeatable per board and per user.
+ */
+async function refreshPersonalCopies() {
+  const s = getState();
+  if (!s.personalLb.enabled || !s.host || !connected || !s.liveboardId) return;
+  const sourceId = s.liveboardId;
+  const tag = s.personalLb.tag || 'Personal';
+  plbDiscovering = true; renderPersonalStrip();
+  try {
+    // Resolve the scoping identity lazily (covers enabling the feature AFTER connect). Without it we
+    // must NOT query — an owner-less tag search would surface other users' copies (a cross-user leak).
+    if (!currentUserLogin) {
+      const u = await Discovery.getCurrentUser(s.host);
+      if (u.ok) { currentUserLogin = u.userId || u.userName || ''; if (u.displayName) currentUserName = u.displayName; }
+    }
+    if (!currentUserLogin) { logEvent('Personalize', '⚠ could not resolve current user — copy discovery skipped'); return; }
+    const r = await Discovery.listPersonalCopies(s.host, sourceId, { userName: currentUserLogin, tag });
+    if (!r.ok) { logEvent('Personalize', `⚠ copy discovery failed: ${r.error}`); return; }
+
+    const cur = getState();
+    const cached = cur.personalLb.copies[sourceId] || [];
+    const cachedById = new Map(cached.map(c => [c.id, c]));
+    const stdName = discovered.liveboards.find(lb => lb.id === sourceId)?.name || '';
+    const prefix = stdName ? `${stdName} — ` : '';
+    const srcTag = Discovery.sourceTag(sourceId);
+    // A live copy belongs to THIS board if it carries this board's src:<guid> tag (authoritative,
+    // rename-proof). Fall back to the local cache or the title prefix only for legacy copies made before
+    // the src tag existed. Preserve any locally-set nickname from the cache so a rename survives re-discovery.
+    const reconciled = r.copies
+      .filter(c => (c.tags || []).includes(srcTag) || cachedById.has(c.id) || (prefix && c.title.startsWith(prefix)))
+      .map(c => ({ id: c.id, title: c.title, label: cachedById.get(c.id)?.label || '' }));
+    const liveIds = new Set(r.copies.map(c => c.id));
+    setState({ personalLb: { ...cur.personalLb,
+      copies: { ...cur.personalLb.copies, [sourceId]: reconciled },
+      // If the active copy was deleted in another session, fall back to Standard.
+      activeCopyId: liveIds.has(cur.personalLb.activeCopyId) ? cur.personalLb.activeCopyId : '' } });
+  } finally {
+    plbDiscovering = false;
+    renderPersonalStrip();
+  }
+}
+
 // ═══ SDK CODE VIEW — full, runnable snippet ═══════════════════════════════════
 function generateCode() {
   const s = getState();
@@ -2930,6 +3307,7 @@ function generateCode() {
   const exportMenu = lbishSection && s.exportOpts?.menuAction;
   const pickerMenu = lbishSection && s.exportOpts?.pickerAction;
   const dateBtn = lbishSection && s.dateBtn?.enabled;
+  const plbOn = ['liveboard', 'liveboard-custom', 'ai-highlights'].includes(s.section) && s.personalLb?.enabled;
   const importNames = ['init', 'AuthType', embedCls, 'EmbedEvent'];
   if (s.customActions.length || exportMenu || pickerMenu || dateBtn) importNames.push('CustomActionsPosition', 'CustomActionTarget');
   const cfbActiveFilters = s.section === 'liveboard-custom'
@@ -2940,6 +3318,7 @@ function generateCode() {
   if (hiddenActionKeys(s).length || s.disabledActions.length) importNames.push('Action');
   if (s.section === 'fullapp') importNames.push('Page');
   if (s.section === 'ai-highlights') importNames.push('HostEvent');
+  if (plbOn) importNames.push('HostEvent');
 
   const L = [];
   L.push(`import {\n  ${[...new Set(importNames)].join(', ')}\n} from '@thoughtspot/visual-embed-sdk';`);
@@ -2996,7 +3375,8 @@ function generateCode() {
   }
   if (s.runtimeParameters.length) { opt.push('  runtimeParameters: ['); s.runtimeParameters.forEach(p => opt.push(`    { name: '${esc(p.name)}', value: '${esc(p.value)}' },`)); opt.push('  ],'); }
 
-  L.push(`const embed = new ${embedCls}('#ts-embed-container', {\n${opt.join('\n')}\n});`);
+  // `let` when Personal liveboards is on so switchBoard() can reassign `embed` on a tab click.
+  L.push(`${plbOn ? 'let' : 'const'} embed = new ${embedCls}('#ts-embed-container', {\n${opt.join('\n')}\n});`);
   if (drillAction) {
     // Drill-down with filters carried over (Q4): clicked attributes + parent filters → detail board.
     L.push('');
@@ -3038,6 +3418,52 @@ function generateCode() {
   if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) {
     // Q2 — no server-side save webhook exists; this client event is the host's save signal.
     L.push('embed.on(EmbedEvent.Save, (payload) => {\n  console.log("Saved inside embed:", payload.data); // sync to your store here\n});');
+  }
+  if (plbOn) {
+    const host = esc(s.host) || 'https://your-instance.thoughtspot.cloud';
+    const tag = esc(s.personalLb?.tag || 'Personal');
+    L.push('');
+    L.push('// ── Personal liveboards — per-user editable copies (host-app UI, not an SDK feature) ─────────');
+    L.push('// "Personalize" makes a full, user-owned CLONE of the standard board via metadata/copyobject');
+    L.push('// (10.3.0.cl+), tags it `Personal` + `src:<sourceId>` so a user\'s copies can be re-discovered');
+    L.push('// per board (the src: tag records WHICH board it came from — rename-proof), then swaps the embed');
+    L.push('// to the chosen board id. Keep your app state on the STANDARD id so it\'s always tab #1.');
+    L.push('// (For saved filter/sort VIEWS instead of editable copies, add Action.PersonalizedViewsDropdown');
+    L.push('//  to visibleActions — no REST needed.) Declare `embed` with `let` so switchBoard() can reassign it.');
+    L.push(`const HOST = '${host}';`);
+    L.push('const REST = { \'Content-Type\': \'application/json\', Accept: \'application/json\' /*, Authorization: `Bearer ${token}` */ };');
+    L.push('');
+    L.push('async function createPersonalCopy(sourceId, title) {');
+    L.push('  const res = await fetch(`${HOST}/api/rest/2.0/metadata/copyobject`, {');
+    L.push('    method: \'POST\', headers: REST, credentials: \'include\',');
+    L.push('    body: JSON.stringify({ identifier: sourceId, type: \'LIVEBOARD\', title }),');
+    L.push('  });');
+    L.push('  const { metadata_id } = await res.json();');
+    L.push('  await fetch(`${HOST}/api/rest/2.0/tags/assign`, {');
+    L.push('    method: \'POST\', headers: REST, credentials: \'include\',');
+    L.push(`    body: JSON.stringify({ metadata: [{ identifier: metadata_id, type: 'LIVEBOARD' }], tag_identifiers: ['${tag}', \`src:\${sourceId}\`] }),`);
+    L.push('  });');
+    L.push('  switchBoard(metadata_id);');
+    L.push('  embed.trigger(HostEvent.Edit); // open the fresh copy editable so the user can personalize it');
+    L.push('  return metadata_id;');
+    L.push('}');
+    L.push('');
+    L.push('// This user\'s copies OF THIS board — an exact, server-side query on the src:<sourceId> tag');
+    L.push('// (owner scopes to the user; the src tag scopes to the board). No title matching, no client cache.');
+    L.push('async function listCopiesForBoard(sourceId) {');
+    L.push('  const me = await (await fetch(`${HOST}/api/rest/2.0/auth/session/user`, { headers: REST, credentials: \'include\' })).json();');
+    L.push('  const res = await fetch(`${HOST}/api/rest/2.0/metadata/search`, {');
+    L.push('    method: \'POST\', headers: REST, credentials: \'include\',');
+    L.push('    body: JSON.stringify({ metadata: [{ type: \'LIVEBOARD\' }], created_by_user_identifiers: [me.id], tag_identifiers: [`src:${sourceId}`], record_size: -1 }),');
+    L.push('  });');
+    L.push('  return (await res.json()).map(m => ({ id: m.metadata_id, title: m.metadata_name }));');
+    L.push('}');
+    L.push('');
+    L.push('function switchBoard(id) { // tab click: destroy + re-embed at the chosen board id');
+    L.push('  embed.destroy();');
+    L.push(`  embed = new ${embedCls}('#ts-embed-container', { frameParams: {}, liveboardV2: true, isLiveboardMasterpiecesEnabled: true, liveboardId: id });`);
+    L.push('  embed.render();');
+    L.push('}');
   }
   if (s.section === 'ai-highlights') {
     // AI Highlights nav option — pop the "how your top metrics changed" panel as soon as the board paints.

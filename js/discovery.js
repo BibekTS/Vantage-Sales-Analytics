@@ -35,6 +35,54 @@ async function api(host, path, options = {}) {
   }
 }
 
+// Base for the local Node server (empty = same origin). Set window.TS_API_BASE to use Live Server.
+const API_BASE = (typeof window !== 'undefined' && window.TS_API_BASE) || '';
+
+/**
+ * Call a TS REST endpoint, choosing direct-vs-relayed by auth mode.
+ *   • Browser-session (no bearer token): call ThoughtSpot directly, like discoverObjects — works when
+ *     the origin is on ThoughtSpot's CORS allowlist.
+ *   • Trusted-auth (bearer token set): relay through the local server's /api/ts-rest, which forwards
+ *     the caller's OWN token. Cookieless trusted auth blocks direct browser→TS REST (CORS), so the
+ *     write/search operations behind the Personal-liveboards feature must go through the proxy.
+ * Returns a normal fetch Response either way (so resp.ok / .status / .json() / .text() all work).
+ *
+ * @param {string} host
+ * @param {string} path   TS REST path (must also be allowlisted server-side for the relay)
+ * @param {{ method?: string, body?: any }} [opts]  body is a plain object (JSON-encoded here)
+ */
+async function apiRest(host, path, { method = 'POST', body } = {}) {
+  if (!bearerToken) {
+    return api(host, path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  }
+  try {
+    const resp = await fetch(`${API_BASE}/api/ts-rest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${bearerToken}` },
+      body: JSON.stringify({ path, method, body: body ?? {} }),
+    });
+    try { window.__onApiCall?.({ scope: 'server→TS', method, path, status: resp.status }); } catch (_) {}
+    return resp;
+  } catch (err) {
+    try { window.__onApiCall?.({ scope: 'server→TS', method, path, status: 0 }); } catch (_) {}
+    throw err;
+  }
+}
+
+/** Pull a concise message out of a TS REST error response (mirrors downloadLiveboardReport's parser). */
+async function restError(resp) {
+  let detail = `HTTP ${resp.status}`;
+  const raw = await resp.text().catch(() => '');
+  if (raw) {
+    try {
+      const e = JSON.parse(raw);
+      const err = e?.error ?? e;
+      detail = err?.message || err?.debug || (typeof err === 'string' ? err : JSON.stringify(err)) || detail;
+    } catch (_) { detail = raw.slice(0, 300); }
+  }
+  return detail;
+}
+
 /** Verify the session and return the current user + org. */
 export async function discoverOrg(host) {
   try {
@@ -159,6 +207,121 @@ export async function discoverAnswers(host, worksheetId) {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+// ── Personal liveboards (per-user editable copies) ────────────────────────────
+// A "personalize" flow: copy a standard liveboard into a user-owned clone, tag it so it can be
+// re-discovered later, and list a user's copies to rebuild the tab strip. All go through apiRest()
+// so they work under both browser-session (direct) and trusted-auth (server relay) modes.
+
+/** Verify the session and return the current user's identity fields (login name, GUID, display, org). */
+export async function getCurrentUser(host) {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/auth/session/user', { method: 'GET' });
+    if (!resp.ok) return { ok: false, status: resp.status, error: `HTTP ${resp.status}` };
+    const d = await resp.json();
+    return {
+      ok: true,
+      userName: d.name || '',                                  // login id → created_by_user_identifiers
+      userId: d.id || '',                                      // GUID (also valid for created_by)
+      displayName: d.display_name || d.name || 'User',
+      orgName: d.current_org?.name || d.orgs?.[0]?.name || '',
+    };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+/** Make a full, user-owned copy of a liveboard. Returns the new liveboard GUID. (copyobject, 10.3.0.cl+) */
+export async function copyLiveboard(host, sourceId, title, description = '') {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/metadata/copyobject', {
+      method: 'POST',
+      body: { identifier: sourceId, type: 'LIVEBOARD', title, description },
+    });
+    if (!resp.ok) return { ok: false, error: await restError(resp), status: resp.status };
+    const d = await resp.json();
+    return { ok: true, id: d.metadata_id };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+/** Create the tag if it doesn't exist (idempotent enough for demo use). Returns true on success/exists. */
+export async function ensureTag(host, tagName) {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/tags/create', { method: 'POST', body: { name: tagName } });
+    return resp.ok || resp.status === 409 || resp.status === 400; // 400/409 typically = already exists
+  } catch (_) { return false; }
+}
+
+/**
+ * The per-source scoping tag that records WHICH board a personal copy was cloned from. Keyed to the
+ * source board's GUID, so it's rename-proof (renaming the board or the copy never changes it) and lets
+ * discovery attribute a copy to its origin server-side — unlike a title prefix. See docs/personal-liveboards.md §5.
+ */
+export const sourceTag = (sourceId) => `src:${sourceId}`;
+
+/** Ensure each tag exists, then assign them all to a liveboard in one call. Requires edit access (the owner). */
+export async function assignTags(host, metadataId, tags) {
+  try {
+    const list = (Array.isArray(tags) ? tags : [tags]).filter(Boolean);
+    if (!list.length) return { ok: true, status: 200, error: '' };
+    for (const t of list) await ensureTag(host, t);
+    const resp = await apiRest(host, '/api/rest/2.0/tags/assign', {
+      method: 'POST',
+      body: { metadata: [{ identifier: metadataId, type: 'LIVEBOARD' }], tag_identifiers: list },
+    });
+    return { ok: resp.ok, status: resp.status, error: resp.ok ? '' : await restError(resp) };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+/** Ensure a tag exists, then assign it to a liveboard. Requires edit access (the caller owns the copy). */
+export async function assignTag(host, metadataId, tag) {
+  return assignTags(host, metadataId, [tag]);
+}
+
+/**
+ * List the current user's personal-copy liveboards (scoped by owner + the scoping tag). The result is
+ * reconciled app-side against the per-source cache/naming to attribute copies to a specific source board.
+ * @param {string} host
+ * @param {string} _sourceId  source board id (used app-side for reconciliation, not sent to the API)
+ * @param {{ userName?: string, tag?: string }} [opts]
+ */
+export async function listPersonalCopies(host, _sourceId, { userName, tag } = {}) {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/metadata/search', {
+      method: 'POST',
+      body: {
+        metadata: [{ type: 'LIVEBOARD' }],
+        ...(userName ? { created_by_user_identifiers: [userName] } : {}),
+        ...(tag ? { tag_identifiers: [tag] } : {}),
+        record_size: -1,
+        record_offset: 0,
+        include_headers: true,
+        sort_options: { field_name: 'MODIFIED', order: 'DESC' },
+      },
+    });
+    if (!resp.ok) return { ok: false, error: await restError(resp), status: resp.status };
+    const data = await resp.json();
+    const copies = (Array.isArray(data) ? data : [])
+      .filter(m => m.metadata_type === 'LIVEBOARD')
+      .map(m => ({
+        id: m.metadata_id,
+        title: m.metadata_name || 'Copy',
+        // Each copy's tags (from metadata_header) let us attribute it to a source board via its src:<guid>
+        // tag, instead of guessing from the title. include_headers:true (set above) makes tags available.
+        tags: (m.metadata_header?.tags || []).map(t => t?.name || t).filter(Boolean),
+      }));
+    return { ok: true, copies };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+/** Delete a liveboard (used to remove a personal copy). Requires the caller to own it. */
+export async function deleteLiveboard(host, id) {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/metadata/delete', {
+      method: 'POST',
+      body: { metadata: [{ identifier: id, type: 'LIVEBOARD' }] },
+    });
+    return { ok: resp.ok, status: resp.status, error: resp.ok ? '' : await restError(resp) };
+  } catch (err) { return { ok: false, error: err.message }; }
 }
 
 /**

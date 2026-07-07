@@ -103,7 +103,10 @@ button { font-family: inherit; cursor: pointer; }
 .tb-auth { border-radius: 0; border-left: none; }
 #connect-btn { border-radius: 0 8px 8px 0; }
 #auth-config-btn { margin-left: 8px; }
-#conn-status { margin-left: 10px; }
+/* Now a direct topbar child (outside the 760px .tb-connect cap) so the connected
+   "user · org" gets the free middle space; flex:0 0 auto keeps it from being
+   squeezed to "…" by the host input beside it. */
+#conn-status { flex: 0 0 auto; margin-left: 2px; }
 .tb-host, .tb-auth {
   height: 34px; background: var(--bg); color: var(--text-primary);
   border: 1px solid var(--border-light); border-radius: 8px;
@@ -131,12 +134,15 @@ button { font-family: inherit; cursor: pointer; }
 
 .tb-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .tb-status {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
   font-family: var(--mono); font-size: 11.5px; font-weight: 600;
   padding: 4px 11px; border-radius: 20px; white-space: nowrap;
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  max-width: 440px; overflow: hidden;
   letter-spacing: .02em;
 }
+/* Ellipsis lives on the label span — text-overflow doesn't apply to the flex
+   container's bare text node, so a long "user · org" was hard-clipped mid-word. */
+.tb-status-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Traffic-light dot — the connection state should be readable at a glance,
    before the text is. Matches the Event Log dot language. */
 .tb-status::before {
@@ -218,7 +224,15 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
 #stage { position: relative; display: flex; flex-direction: column; min-width: 0; }
 #embed-area { position: relative; flex: 1; background: #fff; overflow: hidden; }
 #ts-embed-container { position: absolute; inset: 0; width: 100%; height: 100%; }
-#ts-embed-container iframe { width: 100% !important; height: 100% !important; border: none; }
+#ts-embed-container iframe { width: 100% !important; border: none; }
+/* Default: pin the iframe to fill the fixed-height stage. Scoped to :not(.full-height) so it does
+   NOT clobber the inline content-height the SDK sets when fullHeight is on. */
+#embed-area:not(.full-height) #ts-embed-container iframe { height: 100% !important; }
+/* fullHeight:true — the SDK grows the iframe to the Liveboard's full content height and expects the
+   host to scroll. Let #embed-area scroll and the container/iframe flow to that height instead of
+   being clipped to the container. app.js toggles .full-height from the active fullHeight flag. */
+#embed-area.full-height { overflow-y: auto; }
+#embed-area.full-height #ts-embed-container { position: relative; inset: auto; width: 100%; height: auto; min-height: 100%; }
 
 /* State overlay */
 #state-overlay {
@@ -467,6 +481,17 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
 .fld { display: flex; flex-direction: column; gap: 5px; }
 .fld-lbl { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .fld-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+/* Self-updating guard notices in the token-claims panel (groups / auto-create). */
+.guard-note { font-size: 11.5px; line-height: 1.55; border-radius: 6px; padding: 8px 10px; }
+.guard-note code {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+  background: rgba(0,0,0,.06); border-radius: 4px; padding: 1px 5px;
+}
+.guard-blocked { color: var(--warn); background: var(--warn-soft); border: 1px solid #ead9a8; }
+.guard-ok {
+  color: var(--text-secondary); background: var(--surface);
+  border: 1px solid var(--border); border-left: 3px solid var(--success);
+}
 .inp {
   height: 32px; background: var(--surface); border: 1px solid var(--border-light);
   border-radius: 7px; color: var(--text-primary); padding: 0 10px;
@@ -651,6 +676,43 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
   color: var(--navy); margin: 0 0 4px 4px; transition: background .15s;
 }
 .auth-chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Trusted-auth setup guide (rendered under the status card by renderSetupGuide) */
+#auth-setup-guide:empty { display: none; } /* don't leave a double flex-gap while loading */
+.setup-ready {
+  background: var(--success-soft); border: 1px solid #bfe0cf;
+  border-radius: var(--radius); padding: 10px 13px;
+}
+.setup-ready-t { color: var(--success); font-weight: 700; font-size: 12.5px; }
+.setup-ready-d { color: var(--text-secondary); font-size: 12px; line-height: 1.5; margin-top: 3px; }
+.setup-warn {
+  color: var(--warn); background: var(--warn-soft); border: 1px solid #ead9a8;
+  border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.5; margin-top: 8px;
+}
+.setup-guide {
+  background: var(--warn-soft); border: 1px solid #ead9a8;
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.setup-guide-t { color: var(--warn); font-weight: 700; font-size: 12.5px; margin-bottom: 9px; }
+.setup-steps { margin: 0; padding-left: 19px; display: flex; flex-direction: column; gap: 10px; }
+.setup-step { font-size: 12px; }
+.setup-step::marker { color: var(--warn); font-weight: 700; }
+.setup-step-t { font-weight: 600; color: var(--text-primary); }
+.setup-step-d { color: var(--text-secondary); line-height: 1.5; margin-top: 2px; }
+.env-block { position: relative; margin-top: 6px; }
+.env-block pre {
+  font-family: var(--mono); font-size: 11px; line-height: 1.65;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 11px; margin: 0; overflow-x: auto; white-space: pre;
+}
+.env-block .bp-mini { position: absolute; top: 6px; right: 6px; }
+.setup-secnote {
+  margin-top: 7px; font-size: 11.5px; line-height: 1.5;
+  color: var(--text-secondary); background: var(--surface);
+  border: 1px solid var(--border); border-left: 3px solid var(--warn);
+  border-radius: 6px; padding: 7px 10px;
+}
+.setup-recheck { margin-top: 10px; height: 30px; }
 .auth-group {
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -887,6 +949,65 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
 .drill-label { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drill-label strong { color: var(--accent); }
 .drill-filters { margin-left: 8px; color: var(--text-primary); }
+
+/* Personal liveboards — host-side tab strip above the embed (Standard | copies | ＋ Personalize).
+   Reads as a real tab bar: a subtle grey rail, inactive tabs recede, the active tab lifts to white
+   with an accent top-bar and seats onto the content below. */
+.plb-strip {
+  display: flex; align-items: flex-end; gap: 4px;
+  padding: 6px 10px 0; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); overflow-x: auto;
+}
+.plb-strip::-webkit-scrollbar { height: 6px; }
+.plb-strip::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+.plb-strip--overflow {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+          mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+}
+.plb-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 8px 0 12px; border-radius: 8px 8px 0 0;
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid transparent; border-bottom: none;
+  font-family: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+  transition: color .15s, background .15s;
+}
+.plb-tab:hover { color: var(--accent); background: var(--surface-3); }
+.plb-tab.active {
+  background: var(--surface); color: var(--text-primary);
+  border-color: var(--border); box-shadow: inset 0 2px 0 var(--accent);
+  margin-bottom: -1px; padding-bottom: 1px;   /* cover the strip's bottom border → connected tab */
+}
+.plb-tab--standard.active { color: var(--accent); }
+.plb-tab-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.plb-tab.active .plb-tab-name { font-weight: 600; }
+.plb-tab-close { font-size: 11px; line-height: 1; opacity: .45; border-radius: 4px; padding: 2px 4px; }
+.plb-tab-close:hover { opacity: 1; background: var(--surface-3); color: var(--accent-2); }
+.plb-tab-close.armed { opacity: 1; color: #fff; background: #e5484d; font-size: 10.5px; font-weight: 600; padding: 2px 6px; }
+.plb-rename-input {
+  width: 128px; height: 22px; font: inherit; font-size: 12px;
+  border: 1px solid var(--accent); border-radius: 4px; padding: 0 5px; outline: none;
+}
+.plb-skel {
+  width: 88px; height: 30px; border-radius: 8px 8px 0 0; align-self: flex-end;
+  background: linear-gradient(90deg, var(--surface-3), var(--surface-2), var(--surface-3));
+  background-size: 200% 100%; animation: plb-shimmer 1.1s linear infinite;
+}
+@keyframes plb-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* ＋ Personalize — a quiet dashed button; only the first-run (no copies yet) gets the filled CTA. */
+.plb-add {
+  height: 26px; padding: 0 12px; margin: 0 2px 4px; border-radius: 7px;
+  background: transparent; color: var(--accent); border: 1px dashed var(--accent-border);
+  font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background .15s, border-color .15s;
+}
+.plb-add:hover { background: var(--accent-soft); border-color: var(--accent); }
+.plb-add--cta { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border: none; }
+/* Keep the filled gradient on hover — otherwise .plb-add:hover repaints it near-white and the
+   white label vanishes. Re-declare background/color so this rule wins on source order. */
+.plb-add--cta:hover { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; filter: brightness(1.05); }
+.plb-add.loading { color: var(--text-muted); border-style: solid; }
+.plb-add:disabled { opacity: .6; cursor: default; filter: none; }
 
 /* Inline "+ Add filter" button and column picker */
 .cfb-add-wrap { position: relative; align-self: flex-end; }

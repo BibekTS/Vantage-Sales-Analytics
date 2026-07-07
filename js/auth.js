@@ -85,6 +85,16 @@ function renderBody() {
     <div class="as-row as-allow"><span>Allowlist</span><span id="as-allow">—</span></div>`;
   body.appendChild(status);
 
+  // Setup guide — filled by loadServerStatus() once /api/auth/config answers.
+  // Walks through the one-time secret-key setup when the server isn't ready to mint.
+  const guide = el('div');
+  guide.id = 'auth-setup-guide';
+  body.appendChild(guide);
+
+  // Repaint status + guide from the cached config so field-driven re-renders don't
+  // reset the card to "checking…" (openAuthModal still re-probes for fresh data).
+  if (_lastCfg !== undefined) applyServerStatus(_lastCfg);
+
   const custom = a.tokenType === 'custom';
 
   // Token type — picks the mint endpoint and which ABAC surface is available.
@@ -105,7 +115,11 @@ function renderBody() {
       field('Validity (sec)', a.validitySeconds, v => setAuth({ validitySeconds: Number(v) || 300 }), '300', 'number'),
       field(custom ? 'Org identifier' : 'Org ID', a.orgId, v => setAuth({ orgId: v }), '(default)'),
     ),
+    hint(custom
+      ? 'Org identifier: on a custom token you can use the org’s name or its id. Leave blank for the default org.'
+      : 'Org ID: on a full token this must be the org’s NUMBER (numeric id), not its name — a name is silently ignored. Leave blank for the default org.'),
     toggle('Auto-create user (JIT)', a.autoCreate, v => setAuth({ autoCreate: v })),
+    guardSlot('auth-jit-note'), // filled by paintGuardNotes() from /api/auth/config
     twoCol(
       field('Display name', a.displayName, v => setAuth({ displayName: v }), 'For JIT'),
       field('Email', a.email, v => setAuth({ email: v }), 'For JIT'),
@@ -114,8 +128,9 @@ function renderBody() {
 
   // Groups
   body.appendChild(group(custom ? 'Groups (groups[].identifier)' : 'Groups (group_identifiers)', [
-    chipsEditor(a.groups, list => setAuth({ groups: list }), 'Add group name, Enter'),
-    hint('Group membership drives group-keyed RLS/ABAC rules on the worksheet. Durable path.'),
+    chipsEditor(a.groups, list => setAuth({ groups: list }), 'Type a group name, press Enter'),
+    guardSlot('auth-groups-note'), // filled by paintGuardNotes() from /api/auth/config
+    hint('Adding a group makes this token act as if the user belongs to that group — so you can test group-based security (RLS) rules.'),
   ]));
 
   if (custom) {
@@ -179,6 +194,10 @@ function group(title, children) {
 }
 function subhead(t) { return el('div', 'auth-sub', t); }
 function hint(t) { return el('div', 'fld-hint', t); }
+// A slot whose contents depend on the live server config (group/JIT guards). Starts hidden;
+// paintGuardNotes() fills it once /api/auth/config answers, so a blocked field explains itself
+// in plain language instead of failing with a silent 403 in the Event Log.
+function guardSlot(id) { const d = el('div', 'guard-note'); d.id = id; d.hidden = true; return d; }
 function twoCol(a, b) { const r = el('div', 'two-col'); r.append(a, b); return r; }
 function field(label, value, onChange, ph, type = 'text') {
   const f = el('div', 'fld');
@@ -282,26 +301,178 @@ function addAuthRow(key, row) { const a = getState().auth; setAuth({ [key]: [...
 function updateAuthRow(key, i, row) { const a = getState().auth; const l = [...(a[key] || [])]; l[i] = row; setAuth({ [key]: l }); }
 function removeAuthRow(key, i) { const a = getState().auth; const l = [...(a[key] || [])]; l.splice(i, 1); setAuth({ [key]: l }); renderBody(); }
 
+// ── Setup guide ────────────────────────────────────────────────────────────
+// Rendered under the status card. cfg = the /api/auth/config payload, or null
+// when the token server is unreachable. Dynamic values (hosts, usernames) go in
+// via textContent — never innerHTML.
+function renderSetupGuide(cfg) {
+  const slot = document.getElementById('auth-setup-guide');
+  if (!slot) return;
+  slot.innerHTML = '';
+
+  const topbarHost = (getState().host || '').trim();
+
+  if (cfg && cfg.secretConfigured) {
+    // Ready — say so, then flag the two mistakes that still bite.
+    const ok = el('div', 'setup-ready');
+    ok.appendChild(el('div', 'setup-ready-t', '✓ Ready to connect'));
+    const d = el('div', 'setup-ready-d');
+    d.textContent = 'The server has the secret key (read from TS_SECRET_KEY in .env, server-side only — never sent to the browser) and can mint tokens. Close this panel and click Connect — a token is minted automatically for the embed. Everything below is optional claims (groups, JIT, ABAC).';
+    ok.appendChild(d);
+    slot.appendChild(ok);
+
+    const norm = (u) => String(u || '').replace(/\/+$/, '').toLowerCase();
+    if (topbarHost && cfg.thoughtSpotHost && norm(topbarHost) !== norm(cfg.thoughtSpotHost)) {
+      const w = el('div', 'setup-warn');
+      w.textContent = `⚠ Host mismatch — the top bar points at ${topbarHost}, but the token server mints against ${cfg.thoughtSpotHost} (THOUGHTSPOT_HOST in .env). A token for one cluster is rejected by the other; make them match.`;
+      slot.appendChild(w);
+    }
+    if (!cfg.defaultUsername && !(getState().auth.username || '').trim()) {
+      const w = el('div', 'setup-warn');
+      w.textContent = '⚠ No username to mint for — set TS_DEFAULT_USERNAME in .env (and restart), or type a Username in the Identity section below.';
+      slot.appendChild(w);
+    }
+    return;
+  }
+
+  // Not ready — one-time setup walkthrough.
+  const g = el('div', 'setup-guide');
+  g.appendChild(el('div', 'setup-guide-t', cfg
+    ? 'One-time setup — the server has no secret key yet'
+    : 'One-time setup — the token server is not running'));
+
+  const steps = el('ol', 'setup-steps');
+  const step = (title, ...parts) => {
+    const li = el('li', 'setup-step');
+    li.appendChild(el('div', 'setup-step-t', title));
+    parts.forEach(p => {
+      if (typeof p === 'string') { const d = el('div', 'setup-step-d'); d.textContent = p; li.appendChild(d); }
+      else li.appendChild(p);
+    });
+    steps.appendChild(li);
+  };
+
+  if (!cfg) {
+    step('Start the local token server',
+      'In the project folder run `npm start`, then use the app at http://localhost:3000. A plain static host (e.g. Live Server on :5500) has no /api/auth/token endpoint and cannot mint tokens.',
+      'Then hit Recheck below — if the Secret row already shows “configured ✓” you can skip the remaining steps.');
+  }
+
+  step('Copy the secret key from ThoughtSpot',
+    'In ThoughtSpot open Develop → Customizations → Security settings, enable “Trusted authentication”, and copy the secret_key it reveals. This needs admin/developer privileges — ask an admin if the toggle is greyed out.');
+
+  // .env snippet — prefill the host from the top bar so it's paste-ready.
+  const envText = [
+    `THOUGHTSPOT_HOST=${topbarHost || 'https://your-instance.thoughtspot.cloud'}`,
+    'TS_SECRET_KEY=paste-the-secret-key-here',
+    'TS_DEFAULT_USERNAME=user.to.mint.tokens.for',
+  ].join('\n');
+  const envBlock = el('div', 'env-block');
+  const pre = el('pre');
+  pre.textContent = envText;
+  const copy = el('button', 'bp-mini', 'Copy');
+  copy.onclick = () => {
+    navigator.clipboard.writeText(envText)
+      .then(() => { copy.textContent = 'Copied ✓'; setTimeout(() => { copy.textContent = 'Copy'; }, 1600); })
+      .catch(() => { copy.textContent = 'Select & copy manually'; });
+  };
+  envBlock.append(pre, copy);
+  const secNote = el('div', 'setup-secnote');
+  secNote.textContent = '🔒 Keep the secret in .env — never hardcode it in client-side JS or commit it to git. .env is gitignored here, and the server reads TS_SECRET_KEY from it and injects it into the token request; the browser only ever receives short-lived tokens, never the key itself.';
+  step('Store the secret in a .env file at the project root', envBlock, secNote,
+    'Optional: TS_USERNAME_ALLOWLIST=alice,bob to let the UI mint for more users (fail-closed to the default user when empty).');
+
+  step('Restart the server, then recheck',
+    'Stop the server (Ctrl-C) and run `npm start` again so it picks up the .env changes. When the Secret row above shows “configured ✓”, close this panel and click Connect in the top bar.');
+
+  g.appendChild(steps);
+
+  const recheck = el('button', 'tb-btn setup-recheck', 'Recheck');
+  recheck.onclick = () => {
+    const st = document.getElementById('as-state');
+    if (st) { st.textContent = 'checking…'; st.className = ''; }
+    loadServerStatus();
+  };
+  g.appendChild(recheck);
+  slot.appendChild(g);
+}
+
 // ── Server status + mint ───────────────────────────────────────────────────
+let _lastCfg; // last /api/auth/config result: object = online, null = offline, undefined = never probed
+
 async function loadServerStatus() {
-  const setTxt = (id, txt, cls) => { const e = document.getElementById(id); if (e) { e.textContent = txt; if (cls) e.className = cls; } };
   try {
     const res = await fetch(`${API_BASE}/api/auth/config`);
     try { window.__onApiCall?.({ scope: 'playground', method: 'GET', path: '/api/auth/config', status: res.status }); } catch (_) {}
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const cfg = await res.json();
-    setTxt('as-state', 'online ✓', 'as-ok');
-    setTxt('as-secret', cfg.secretConfigured ? 'configured ✓' : 'NOT configured ✗', cfg.secretConfigured ? 'as-ok' : 'as-bad');
-    setTxt('as-host', cfg.thoughtSpotHost || '(not set)');
-    const allow = document.getElementById('as-allow');
-    if (allow) {
-      allow.innerHTML = '';
-      (cfg.allowlist || []).forEach(u => { const c = el('button', 'auth-chip'); c.textContent = u; c.onclick = () => { setAuth({ username: u }); renderBody(); loadServerStatus(); }; allow.appendChild(c); });
-      if (!(cfg.allowlist || []).length) allow.textContent = '(none)';
-    }
+    _lastCfg = await res.json();
   } catch (e) {
+    _lastCfg = null;
+  }
+  applyServerStatus(_lastCfg);
+}
+
+// Paint the status card + setup guide from a (possibly cached) config. Kept separate from the
+// fetch so renderBody() can repaint from cache instead of leaving "checking…" after a re-render.
+function applyServerStatus(cfg) {
+  const setTxt = (id, txt, cls) => { const e = document.getElementById(id); if (e) { e.textContent = txt; if (cls) e.className = cls; } };
+  if (!cfg) {
     setTxt('as-state', `offline — run: npm start`, 'as-bad');
     setTxt('as-secret', '—');
+    renderSetupGuide(null);
+    paintGuardNotes(null);
+    return;
+  }
+  setTxt('as-state', 'online ✓', 'as-ok');
+  setTxt('as-secret', cfg.secretConfigured ? 'configured ✓' : 'NOT configured ✗', cfg.secretConfigured ? 'as-ok' : 'as-bad');
+  setTxt('as-host', cfg.thoughtSpotHost || '(not set)');
+  const allow = document.getElementById('as-allow');
+  if (allow) {
+    allow.innerHTML = '';
+    (cfg.allowlist || []).forEach(u => { const c = el('button', 'auth-chip'); c.textContent = u; c.onclick = () => { setAuth({ username: u }); renderBody(); }; allow.appendChild(c); });
+    if (!(cfg.allowlist || []).length) allow.textContent = '(none)';
+  }
+  renderSetupGuide(cfg);
+  paintGuardNotes(cfg);
+}
+
+// Plain-language, self-updating notices under the Groups field and Auto-create toggle.
+// They read the server's fail-closed guards (cfg.groupGuard, cfg.allowJit) so a tester sees
+// WHY a claim is blocked and the exact one-line fix — instead of a silent 403 in the Event Log.
+// Content is static (no user/upstream data), so innerHTML with <code> is safe here.
+function paintGuardNotes(cfg) {
+  const set = (id, blocked, html) => {
+    const e = document.getElementById(id);
+    if (!e) return;
+    if (!cfg) { e.hidden = true; return; }          // offline — the setup guide already covers it
+    e.hidden = false;
+    e.className = `guard-note ${blocked ? 'guard-blocked' : 'guard-ok'}`;
+    e.innerHTML = html;
+  };
+
+  // Groups guard: 'none' = all blocked, 'any' = wildcard, or an array of allowed names.
+  const gg = cfg && cfg.groupGuard;
+  if (gg === 'none') {
+    set('auth-groups-note', true,
+      '🔒 The server is blocking <b>all</b> groups right now, so adding one here will fail (look for a red ✗ in the Event Log at the bottom). ' +
+      '<b>To allow groups:</b> add <code>TS_GROUP_ALLOWLIST=*</code> to your <code>.env</code> file, then restart the server (stop it and run <code>npm start</code>). ' +
+      'Even after that, a group only changes the numbers you see if ThoughtSpot has a row-level-security (RLS) rule built for that group.');
+  } else if (gg) {
+    const which = gg === 'any' ? 'any group' : `only these groups: <b>${[].concat(gg).join(', ')}</b> (others are rejected)`;
+    set('auth-groups-note', false,
+      `✓ The server allows ${which}. Remember: a group only changes the numbers you see if ThoughtSpot has a row-level-security (RLS) rule built for it.`);
+  } else {
+    set('auth-groups-note', true, '');
+  }
+
+  // JIT (auto_create) guard.
+  if (cfg && cfg.allowJit) {
+    set('auth-jit-note', false,
+      '✓ Auto-create is enabled on the server. A brand-new user (plus the Display name / Email below) is provisioned on first sign-in.');
+  } else {
+    set('auth-jit-note', true,
+      '🔒 Auto-create is turned <b>off</b> on the server, so switching it on here will fail. ' +
+      '<b>To allow it:</b> add <code>TS_ALLOW_JIT=true</code> to your <code>.env</code> file, then restart the server.');
   }
 }
 

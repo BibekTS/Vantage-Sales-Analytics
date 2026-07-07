@@ -10,6 +10,7 @@
  *   ✓ JIT (auto_create) is refused unless TS_ALLOW_JIT=true
  *   ✓ minting into a non-allowlisted group is refused
  *   ✓ the filter-values proxy refuses callers with no bearer token (never mints an admin one)
+ *   ✓ the ts-rest relay rejects non-allowlisted paths and tokenless callers (never mints)
  *   ✓ the write-back stub is refused unless TS_ALLOW_DEV_PROXY=true
  */
 
@@ -114,6 +115,18 @@ try {
   {
     const r = await postJson('/api/filter-values', { liveboardId: 'abc' });
     check('filter-values without a token → 401', r.status === 401, `status ${r.status}`);
+  }
+
+  // 6b) The /api/ts-rest relay (Personal liveboards) is allowlist-guarded and never mints.
+  {
+    // Non-allowlisted path is rejected before any token is even considered.
+    const r = await postJson('/api/ts-rest', { path: '/api/rest/2.0/metadata/delete-all', method: 'POST', body: {} });
+    check('ts-rest non-allowlisted path → 400', r.status === 400, `status ${r.status}`);
+  }
+  {
+    // An allowlisted path still requires the CALLER'S own bearer token — the relay never mints one.
+    const r = await postJson('/api/ts-rest', { path: '/api/rest/2.0/metadata/copyobject', method: 'POST', body: { identifier: 'abc' } });
+    check('ts-rest allowlisted path without a token → 401', r.status === 401, `status ${r.status}`);
   }
 
   // 7) The write-back stub is opt-in.

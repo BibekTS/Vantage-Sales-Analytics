@@ -9,6 +9,7 @@
 import {
   init,
   AuthType,
+  AuthStatus,
   SearchEmbed,
   SearchBarEmbed,
   SpotterEmbed,
@@ -87,6 +88,10 @@ async function fetchTrustedAuthToken(config) {
  * @param {{ thoughtSpotHost: string, authType: string, trustedAuth?: object }} config  TS_CONFIG object
  */
 export function initSDK(config) {
+  // No host yet (fresh boot, or auth type picked before connecting) — init() throws on an
+  // empty/invalid URL, which would abort the caller. Nothing can embed without a host anyway;
+  // applyConfig() re-runs with the real host on Connect.
+  if (!config.thoughtSpotHost) return;
   const base = {
     thoughtSpotHost: config.thoughtSpotHost,
     ...(config._customStyles && {
@@ -94,16 +99,35 @@ export function initSDK(config) {
     }),
   };
 
+  let authEE;
   if (config.authType === 'TrustedAuthTokenCookieless' || config.authType === 'TrustedAuthToken') {
-    init({
+    authEE = init({
       ...base,
       authType: AuthType[config.authType],
       autoLogin: config.trustedAuth?.autoLogin ?? true,
       getAuthToken: () => fetchTrustedAuthToken(config),
     });
   } else {
-    init({ ...base, authType: AuthType[config.authType] ?? AuthType.None });
+    authEE = init({ ...base, authType: AuthType[config.authType] ?? AuthType.None });
   }
+  bindAuthStatus(authEE);
+}
+
+// init() returns the SDK's auth event emitter. AuthStatus.FAILURE fires when a session can't be
+// established — the real signal for "token minted but ThoughtSpot won't log the iframe in" (which
+// EmbedEvent.AuthFailure does NOT cover). Bind listeners once: initSDK re-runs on every config
+// change, and the emitter is effectively a singleton, so re-.on()-ing would stack duplicate handlers.
+let _boundAuthEE = null;
+function bindAuthStatus(authEE) {
+  if (!authEE || typeof authEE.on !== 'function' || authEE === _boundAuthEE) return;
+  _boundAuthEE = authEE;
+  authEE.on(AuthStatus.FAILURE, (reason) => {
+    const type = typeof reason === 'string' ? reason : (reason?.type || reason?.failureType || '');
+    if (window.__onAuthStatus) window.__onAuthStatus('FAILURE', type);
+  });
+  const onOk = () => { if (window.__onAuthStatus) window.__onAuthStatus('SUCCESS'); };
+  authEE.on(AuthStatus.SDK_SUCCESS, onOk);
+  authEE.on(AuthStatus.SUCCESS, onOk);
 }
 
 /**
@@ -123,6 +147,15 @@ export function initSDK(config) {
  * }} options
  * @returns {object}  The embed instance (so the caller can call .destroy() later)
  */
+/** Pull the AuthFailureType (SDK | NO_COOKIE_ACCESS | EXPIRY | IDLE_SESSION_TIMEOUT | OTHER)
+ * out of an EmbedEvent.AuthFailure payload, tolerating the SDK's shape variation. '' if absent. */
+function _authFailureType(e) {
+  const d = e?.data ?? e;
+  if (typeof d === 'string') return d;
+  if (d && typeof d === 'object') return d.type || d.failureType || d.reason || '';
+  return '';
+}
+
 /** Extract a concise, readable message from a ThoughtSpot SDK EmbedEvent.Error payload. */
 function _extractErrorMessage(e) {
   // The SDK ships the error under different shapes across versions: the payload itself,
@@ -325,6 +358,20 @@ export function doRender(section, config, callbacks, options = {}) {
       onDone();
       onError('__NO_COOKIE__');
       onEvent('NoCookieAccess', '⚠ Third-party cookies blocked — enable cookies or use a different auth type');
+    })
+    .on(EmbedEvent.AuthExpire, () => {
+      // The token lapsed; the SDK now calls getAuthToken to refresh it. Informational only —
+      // a refresh that actually fails surfaces separately as AuthFailure below.
+      onEvent('AuthExpire', 'Auth token expired — refreshing via getAuthToken');
+    })
+    .on(EmbedEvent.AuthFailure, (e) => {
+      // Terminal: the embed could not establish/keep a ThoughtSpot session (rejected or expired
+      // token, blocked cookies, idle timeout). TS renders its OWN "Not logged in" page inside the
+      // iframe — surface the app's styled overlay instead of leaving that bare page showing.
+      onDone();
+      onError('__AUTH_FAILURE__');
+      const type = _authFailureType(e);
+      onEvent('AuthFailure', `⚠ Auth failed${type ? ` (${type})` : ''} — the embed has no ThoughtSpot session`);
     })
     .on(EmbedEvent.Error, (e) => {
       let msg = _extractErrorMessage(e);

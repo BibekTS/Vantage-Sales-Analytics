@@ -30,8 +30,11 @@
       </select>
       <button id="connect-btn" class="tb-btn tb-btn-primary">Connect</button>
       <button id="auth-config-btn" class="tb-btn" hidden title="Configure trusted-auth token claims">Token claims…</button>
-      <span id="conn-status" class="tb-status" data-state="idle">Not connected</span>
     </div>
+
+    <!-- Status pill sits apart from the fused connect control so it isn't squeezed
+         by the 760px cap — the connected "user · org" needs room to show in full. -->
+    <span id="conn-status" class="tb-status" data-state="idle"><span class="tb-status-txt">Not connected</span></span>
 
     <div class="tb-right">
       <a id="docs-link" class="tb-icon-btn" href="https://developers.thoughtspot.com/docs/" target="_blank" rel="noopener"
@@ -83,6 +86,9 @@
         </div>
       </div>
 
+      <!-- Personal liveboards: host-side tab strip (Standard | user copies | ＋ Personalize) -->
+      <div id="personal-lb-strip" class="plb-strip" hidden></div>
+
       <div id="embed-area">
         <div id="ts-embed-container"></div>
 
@@ -121,6 +127,7 @@
             <div class="st-title" id="not-logged-in-title">Not authenticated</div>
             <div class="st-sub" id="not-logged-in-sub">Browser-session auth needs an active login at the host. Open ThoughtSpot, sign in, then retry.</div>
             <div class="st-actions">
+              <button id="open-claims-btn" class="st-btn" data-act="open-claims" hidden>Open Token claims…</button>
               <a id="login-link" class="st-link" href="#" target="_blank" rel="noopener">Open ThoughtSpot ↗</a>
               <button class="st-btn" data-act="retry">Retry</button>
             </div>

@@ -35,6 +35,7 @@
  *   POST /api/auth/token     — mint a full OR custom (ABAC) token (allowlist + JIT/group guarded, rate-limited)
  *   POST /api/writeback      — sink for the write-back custom action (stub; TS_ALLOW_DEV_PROXY)
  *   POST /api/filter-values  — filter-value discovery using the CALLER'S bearer token (no minting)
+ *   POST /api/ts-rest        — CORS relay for an allowlisted set of REST paths, using the CALLER'S token
  *   (static) /js /css /vendor /config.js /  — the frontend only
  *   GET  /docs/tse-best-practices.html — the TSE best-practices compendium (single file, not the docs dir)
  */
@@ -390,6 +391,50 @@ app.post('/api/filter-values', rateLimiter({ windowMs: 60_000, max: 120 }), asyn
       return v === null || v === undefined ? '{Null}' : String(v);
     }))].sort();
     res.json({ column, values });
+  } catch (err) {
+    const status = err.statusCode || 500;
+    res.status(status).json({ error: err.message, upstream: err.upstream });
+  }
+});
+
+// ── POST /api/ts-rest — CORS relay for an allowlisted set of REST paths, using the CALLER'S token ──
+// Cookieless trusted auth blocks the browser from calling ThoughtSpot REST cross-origin (CORS). The
+// Personal-liveboards feature needs a few write/search endpoints, so this relay forwards them using
+// the bearer token the CALLER already holds. Same security model as /api/filter-values: it NEVER mints
+// a token, only forwards allowlisted paths, and is rate-limited + localhost-only. No caller token → 401.
+const REST_RELAY_ALLOW = new Set([
+  '/api/rest/2.0/metadata/copyobject',
+  '/api/rest/2.0/metadata/search',
+  '/api/rest/2.0/metadata/delete',
+  '/api/rest/2.0/tags/create',
+  '/api/rest/2.0/tags/assign',
+  '/api/rest/2.0/auth/session/user',
+]);
+app.post('/api/ts-rest', rateLimiter({ windowMs: 60_000, max: 120 }), async (req, res) => {
+  try {
+    const relayPath = String(req.body?.path || '');
+    const method = String(req.body?.method || 'POST').toUpperCase();
+    if (!REST_RELAY_ALLOW.has(relayPath)) {
+      return res.status(400).json({ error: `path not allowlisted for relay: ${relayPath || '(none)'}` });
+    }
+
+    const auth = req.get('authorization') || '';
+    const token = (/^Bearer\s+(.+)$/i.exec(auth)?.[1] || '').trim();
+    if (!token) {
+      return res.status(401).json({ error: 'A caller bearer token is required (Authorization: Bearer <token>). This proxy never mints one for you.' });
+    }
+
+    const upstream = await fetch(`${TS_HOST}${relayPath}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      ...(method !== 'GET' && method !== 'HEAD' ? { body: JSON.stringify(req.body?.body ?? {}) } : {}),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
   } catch (err) {
     const status = err.statusCode || 500;
     res.status(status).json({ error: err.message, upstream: err.upstream });

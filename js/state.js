@@ -76,6 +76,17 @@ export function defaultState() {
       enabled: false,
       column: 'Order Date',           // runtime-filter target column
     },
+    // Personal liveboards — per-source-board editable copies, shown as a host-side tab strip
+    // (Standard | your copies | ＋ Personalize). Each copy is a full, user-owned clone made via
+    // POST metadata/copyobject and tagged for re-discovery. `copies` is keyed by the SOURCE board
+    // id so the feature is repeatable for any liveboard; it's a fast-paint cache — the server
+    // reconciliation in app.js refreshPersonalCopies() is the source of truth. Off by default.
+    personalLb: {
+      enabled: false,
+      tag: 'Personal',                // scoping tag applied to every copy + used to re-discover them
+      activeCopyId: '',               // '' = the Standard board (tab #1); else a copy's liveboardId
+      copies: {},                     // { [sourceLiveboardId]: [{ id, title }] }
+    },
     styles: { variables: {}, rules: {} },
     // trusted-auth claims (NON-secret) — the token-claims playground
     auth: {
@@ -300,6 +311,21 @@ function sanitize(raw) {
     };
   }
 
+  if (has('personalLb') && raw.personalLb && typeof raw.personalLb === 'object') {
+    const p = raw.personalLb;
+    // `activeCopyId` and every copies[].id are GUIDs from the attacker-controllable #s= hash that get
+    // fed into credentialed REST/embed calls — cap lengths, coerce types, and let cleanMap drop
+    // prototype-polluting keys. Nothing is contacted until the user confirms the host (pendingHostConfirm).
+    out.personalLb = {
+      enabled: bool(p.enabled),
+      tag: str(p.tag, 128) || 'Personal',
+      activeCopyId: str(p.activeCopyId, 128),
+      copies: cleanMap(p.copies, list => arr(list).map(c => ({
+        id: str(c?.id, 128), title: str(c?.title, 256), label: str(c?.label, 120),
+      })).filter(c => c.id)),
+    };
+  }
+
   if (has('styles')) out.styles = {
     variables: cleanMap(raw.styles?.variables, v => str(v, 512)),
     rules: cleanMap(raw.styles?.rules, decls => cleanMap(decls, v => str(v, 512))),
@@ -344,6 +370,7 @@ function mergeKnown(base, loaded) {
   out.flags = { ...(loaded.flags || {}) };
   out.exportOpts = { ...base.exportOpts, ...(loaded.exportOpts || {}) };
   out.dateBtn = { ...base.dateBtn, ...(loaded.dateBtn || {}) };
+  out.personalLb = { ...base.personalLb, ...(loaded.personalLb || {}) };
   return out;
 }
 
