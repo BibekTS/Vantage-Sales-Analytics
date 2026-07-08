@@ -172,6 +172,9 @@
             <div class="st-spinner"></div>
             <div class="st-title">Loading embed…</div>
             <div class="st-sub" id="loading-sub"></div>
+            <!-- Live lifecycle progress so a slow switch visibly shows it's working (driven by
+                 SDK events via renderLoadingProgress → flowMark). -->
+            <div class="st-progress" id="loading-steps"></div>
           </div>
           <div class="st st-error">
             <div class="st-icon">⚠</div>

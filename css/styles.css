@@ -221,8 +221,11 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
 .rail-tip-body { font-size: 12px; line-height: 1.5; color: rgba(255, 255, 255, .82); }
 
 /* ── Stage ───────────────────────────────────────────────────────────────── */
-#stage { position: relative; display: flex; flex-direction: column; min-width: 0; }
-#embed-area { position: relative; flex: 1; background: #fff; overflow: hidden; }
+/* min-height:0 on both the grid item (#stage) and the flex child (#embed-area) is REQUIRED:
+   without it their default min-height:auto lets them grow to content height, so when fullHeight
+   makes the embed tall they expand instead of letting #embed-area's overflow-y:auto scroll. */
+#stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#embed-area { position: relative; flex: 1; min-height: 0; background: #fff; overflow: hidden; }
 #ts-embed-container { position: absolute; inset: 0; width: 100%; height: 100%; }
 #ts-embed-container iframe { width: 100% !important; border: none; }
 /* Default: pin the iframe to fill the fixed-height stage. Scoped to :not(.full-height) so it does
@@ -285,6 +288,25 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Loading-overlay live progress checklist (renderLoadingProgress) */
+.st-progress { display: flex; flex-direction: column; gap: 7px; margin-top: 18px; text-align: left; min-width: 230px; }
+.lp-step { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--text-muted); }
+.lp-step.lp-done { color: var(--text-secondary); }
+.lp-step.lp-active { color: var(--navy); font-weight: 600; }
+.lp-step.lp-failed { color: var(--danger, #e0245e); font-weight: 600; }
+.lp-mark {
+  width: 16px; height: 16px; flex: 0 0 auto; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700;
+  border: 1.5px solid var(--border-light); color: var(--text-muted); background: var(--surface);
+}
+.lp-done .lp-mark { border-color: var(--success); background: var(--success); color: #fff; }
+.lp-failed .lp-mark { border-color: var(--danger, #e0245e); background: var(--danger, #e0245e); color: #fff; }
+/* Active step: a small pulsing spinner in place of the mark glyph. */
+.lp-active .lp-mark {
+  border: 1.5px solid var(--border); border-top-color: var(--accent);
+  background: transparent; animation: spin .8s linear infinite;
+}
 
 /* ── Bottom panel ────────────────────────────────────────────────────────── */
 #bottom {
@@ -576,12 +598,32 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
 .rows { display: flex; flex-direction: column; gap: 7px; }
 .frow { display: flex; gap: 6px; align-items: center; }
 .frow .inp { flex: 1; }
+/* Typed runtime-filter row rendered as a card: column + ✕ (line 1) · type | operator (line 2) · value (line 3). */
+.frow--typed {
+  flex-direction: column; align-items: stretch; gap: 7px;
+  padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.frow--typed:focus-within { background: var(--surface); border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-soft); }
+.frow-head { display: flex; gap: 6px; align-items: center; }
+.frow-head .frow-col { flex: 1; min-width: 0; font-weight: 600; }
+.frow-controls { display: flex; gap: 6px; }
+.frow-controls .frow-type { flex: 0 0 88px; }
+.frow-controls .frow-op { flex: 1; min-width: 0; }
+.frow--typed .frow-valwrap { display: flex; gap: 6px; }
+.frow--typed .frow-valwrap .inp { flex: 1; min-width: 0; }
+/* Empty state when no filters are configured yet. */
+.frow-empty {
+  font-size: 11.5px; color: var(--text-muted); text-align: center; line-height: 1.5;
+  padding: 14px 12px; border: 1px dashed var(--border-light); border-radius: 8px;
+  background: var(--surface-2);
+}
 .frow-x {
   width: 28px; height: 30px; flex: 0 0 auto; border-radius: 6px;
   background: var(--surface-2); border: 1px solid var(--border);
   color: var(--text-muted); font-size: 12px; transition: color .15s, border-color .15s;
 }
-.frow-x:hover { color: var(--danger); border-color: #ebcccc; }
+.frow-x:hover { color: var(--danger); border-color: #ebcccc; background: var(--danger-soft); }
 .frow-go {
   width: 34px; height: 30px; flex: 0 0 auto; border-radius: 6px;
   background: var(--accent); border: none; color: #fff; font-size: 14px;

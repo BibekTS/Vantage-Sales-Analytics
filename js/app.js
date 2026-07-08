@@ -177,7 +177,23 @@ const HINTS = {
   pageId: 'Which page the full-app embed opens on first.',
 };
 
-const OPERATORS = ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'IN', 'NOT_IN', 'CONTAINS', 'BEGINS_WITH', 'ENDS_WITH'];
+// Runtime-filter operators, scoped by column data type so the UI offers a clean, type-appropriate
+// set. Date columns get comparison + between operators (no substring/list ops); text gets equality +
+// substring/list ops (no ordering); number gets everything ordered + list. BW* = "between".
+const OP_GROUPS = {
+  text:   ['EQ', 'NE', 'IN', 'NOT_IN', 'CONTAINS', 'BEGINS_WITH', 'ENDS_WITH'],
+  number: ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'BW_INC', 'BW', 'BW_INC_MIN', 'BW_INC_MAX', 'IN', 'NOT_IN'],
+  date:   ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'BW_INC', 'BW', 'BW_INC_MIN', 'BW_INC_MAX'],
+};
+// Human hints for operators whose meaning shifts on dates (LT/GT read as before/after).
+const DATE_OP_LABEL = {
+  EQ: 'EQ (on)', NE: 'NE (not on)', LT: 'LT (before)', LE: 'LE (on or before)',
+  GT: 'GT (after)', GE: 'GE (on or after)', BW_INC: 'BW_INC (between, incl.)', BW: 'BW (between, excl.)',
+  BW_INC_MIN: 'BW_INC_MIN (incl. start)', BW_INC_MAX: 'BW_INC_MAX (incl. end)',
+};
+const opsForType = (t) => OP_GROUPS[t] || OP_GROUPS.text;
+// Operators that require exactly two values (min, max). Used to hint/validate in the filter UI.
+const RANGE_OPERATORS = new Set(['BW_INC', 'BW', 'BW_INC_MIN', 'BW_INC_MAX']);
 
 // ── Runtime (non-shared) state ────────────────────────────────────────────────
 let currentEmbed = null;
@@ -200,6 +216,10 @@ let lastSaved = null;            // { name, guid, at } — most recent EmbedEven
 let drillParent = null;          // { liveboardId } — set while drilled into a detail board (Q4)
 let authFailed = false;          // set when the embed reports AuthFailure/NoCookie; keeps the
                                  // not-logged-in overlay pinned so a late Load event can't hide it
+// Columns we've pushed to the live embed via HostEvent.UpdateRuntimeFilters. That event APPENDS
+// (omitting a column does NOT remove it), so to make removals stick we resend an empty-values entry
+// for any previously-applied column that's no longer wanted. Reset on each (re)render (fresh iframe).
+let appliedRuntimeCols = new Set();
 // Personal liveboards — the connected user's identity (for scoping copy discovery) + a one-shot flag
 // so a freshly-created copy opens straight into Edit mode. Captured in connect(); non-fatal if absent.
 let currentUserName = '';        // display name (for copy titles)
@@ -297,7 +317,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelectorAll('.cfb-panel .cfb-value-cb').forEach(cb => { cb.checked = false; });
     document.querySelectorAll('.cfb-panel .cfb-item--all input').forEach(cb => { cb.checked = true; });
     document.querySelectorAll('.cfb-toggle').forEach(btn => { btn.textContent = 'All'; btn.classList.remove('cfb-toggle--active'); });
-    if (currentEmbed) { currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, []); logEvent('CustomFilter', 'cleared'); }
+    // cfbSelected is now {}, so the desired set is just any Inspector runtime filters; pushRuntimeFilters
+    // emits empty-values clears for the de-selected cfb columns (a bare [] would clear nothing — append).
+    if (currentEmbed) { try { pushRuntimeFilters(buildParentRuntimeFilters().filter(f => f.columnName && f.values && f.values.length)); } catch (_) {} logEvent('CustomFilter', 'cleared'); }
   });
 
   // Export button for the custom filter bar (REST: /api/rest/2.0/report/liveboard).
@@ -584,6 +606,7 @@ function render() {
   cfg.liveboardId = effectiveLiveboardId(s);
 
   authFailed = false; // fresh render — clear any prior auth-failure latch
+  appliedRuntimeCols = new Set(); // fresh iframe carries no runtime filters yet
   currentEmbed = doRender(s.section, cfg, {
     onDone() { if (authFailed) return; clearTimeout(fallback); setOverlay('hidden'); applyLiveFilters(); if (getState().section === 'liveboard-custom') cfbBuild(); maybeOpenCreatedCopyForEdit(); },
     onError(msg) {
@@ -608,13 +631,31 @@ function render() {
   flowStart(); // SDK is now creating the iframe & opening the postMessage bridge
 }
 
+// Send the FULL desired runtime-filter set to the embed, plus an empty-values "clear" for any column
+// we previously applied that's no longer in `desired` — because UpdateRuntimeFilters appends, that's
+// the only way a removed filter actually leaves the board. `desired` = [{ columnName, operator, values }].
+function pushRuntimeFilters(desired, logLabel = 'UpdateRuntimeFilters') {
+  if (!currentEmbed) return;
+  const cols = new Set(desired.map(f => f.columnName).filter(Boolean));
+  const clears = [...appliedRuntimeCols].filter(c => !cols.has(c))
+    .map(c => ({ columnName: c, operator: RuntimeFilterOp.EQ, values: [] }));
+  try {
+    currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, [...desired, ...clears]);
+    appliedRuntimeCols = cols;
+    logEvent('HostEvent', `${logLabel}: ${desired.length} filter(s)${clears.length ? `, ${clears.length} cleared` : ''}`);
+  } catch (e) {
+    logEvent('HostEvent', `✗ UpdateRuntimeFilters: ${e.message}`);
+    throw e;
+  }
+}
+
 function applyLiveFilters() {
   const s = getState();
   if (!currentEmbed || !s.activeFilters.length) return;
   const filters = s.activeFilters.map(f => ({
-    columnName: f.columnName, operator: RuntimeFilterOp[f.opKey], values: f.values,
+    columnName: f.columnName, operator: RuntimeFilterOp[f.opKey], values: dateAwareValues(f),
   }));
-  try { currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, filters); logEvent('HostEvent', `UpdateRuntimeFilters: ${filters.length} filter(s)`); } catch (_) {}
+  try { pushRuntimeFilters(filters); } catch (_) {}
 }
 
 // ── State overlay ─────────────────────────────────────────────────────────────
@@ -1008,7 +1049,19 @@ function sectionObject(s) {
       .filter(lb => !plbTag || lb.id === s.liveboardId || !(lb.tags || []).includes(plbTag))
       .map(lb => ({ id: lb.id, name: lb.tags?.length ? `${lb.name}  ·  ${lb.tags.join(', ')}` : lb.name }));
     c.appendChild(labeledSelect('Liveboard', s.liveboardId, lbOptions,
-      async v => { setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {}, personalLb: { ...getState().personalLb, activeCopyId: '' } }); cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {}; await loadViz(v); await refreshPersonalCopies(); renderInspector(); render(); }, '', !connected));
+      async v => {
+        setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {}, personalLb: { ...getState().personalLb, activeCopyId: '' } });
+        cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {};
+        // Switch the embed IMMEDIATELY — a Liveboard embed only needs liveboardId. The viz list
+        // (for the Visualization dropdown) and the Personal-liveboards strip are ancillary, so load
+        // them in the background and repaint the inspector when they arrive, instead of blocking the
+        // board switch on two REST round-trips (the "board doesn't update right away" lag).
+        renderInspector();
+        render();
+        await loadViz(v);
+        await refreshPersonalCopies();
+        renderInspector();
+      }, '', !connected));
   }
   if (needs === 'viz') {
     // Lazy-load vizzes when the inspector renders with a pre-selected liveboard but a cold
@@ -1142,6 +1195,11 @@ function sectionDisplay(s) {
       c.appendChild(textField('Filter column', db.column, v => {
         setState({ dateBtn: { ...getState().dateBtn, column: v || 'Order Date' } });
       }, 'Order Date'));
+      c.appendChild(enumSelect('Apply via', db.applyVia || 'runtime', [
+        { value: 'runtime', label: 'Runtime filter (invisible, ANDs)' },
+        { value: 'liveboard', label: 'Liveboard filter (updates visible chip)' },
+      ], v => { setState({ dateBtn: { ...getState().dateBtn, applyVia: v } }); },
+        'Runtime = HostEvent.UpdateRuntimeFilters: an invisible layer that ANDs with the board’s own filters (never shows in the filter bar). Liveboard = HostEvent.UpdateFilters: changes the value of a date filter the board already has (moves the visible chip). Use Liveboard when you want the board’s date filter to actually update.'));
     }
   }
   // Personal liveboards — per-user editable copies shown as a tab strip above the board.
@@ -1461,27 +1519,129 @@ function todayISO() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-// Apply (iso = 'YYYY-MM-DD') or clear (iso = null) an "On this date" runtime filter on `column`.
-// UpdateRuntimeFilters REPLACES the whole set, so we resend existing runtime/filter-bar filters
-// (minus this column) alongside it. Date values go as epoch SECONDS — ThoughtSpot's date runtime-
-// filter format — at local midnight, so "Today" is recomputed fresh on each click.
-function applyDateFilter(column, iso) {
+// ThoughtSpot date runtime filters expect epoch seconds at **UTC** midnight (per the SDK docs +
+// EXACT_DATE examples: 1710460800 = 2024-03-15 00:00:00 UTC). Using LOCAL midnight offsets the value
+// by the browser's tz and the filter silently misses. So compute UTC. (Also: date epoch values MUST
+// be passed to the SDK as NUMBERS, not strings — see numify()/how these are triggered.)
+function isoToEpochSec(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 1000);
+}
+// Last second of that UTC day (23:59:59) — the inclusive upper bound for a day/range (EXACT_DATE_RANGE
+// high_epoch is the end of the day, e.g. 1735689599 = 2024-12-31 23:59:59 UTC).
+function isoToEndOfDayEpochSec(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d + 1) / 1000) - 1;
+}
+// Epoch SECONDS at LOCAL NOON of an ISO date. Used ONLY for the visible Liveboard-filter path
+// (HostEvent.UpdateFilters): TS renders that value in the VIEWER's timezone, so a UTC-midnight value
+// (or a bare YYYY-MM-DD string, which TS parses as UTC) lands one day early west of UTC. Noon-local
+// keeps the instant inside the picked calendar day for any viewer tz within ±12h. (The runtime-filter
+// path keeps UTC day-bounds — that matches TS's documented epoch examples and query semantics.)
+function isoToLocalNoonEpochSec(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.floor(new Date(y, m - 1, d, 12, 0, 0).getTime() / 1000);
+}
+// Reverse of isoToEpochSec — epoch seconds → YYYY-MM-DD using UTC parts (so a value round-trips
+// through a <input type="date"> unchanged). Empty string for anything non-numeric.
+function epochSecToISO(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n)) return '';
+  const d = new Date(n * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+// Runtime-filter values for a filter row, coercing DATE rows' epoch strings to NUMBERS (TS silently
+// ignores date epochs sent as strings). Text/number rows keep their string values untouched.
+function dateAwareValues(f) {
+  if (f?.dataType !== 'date') return f?.values || [];
+  return (f.values || []).map(Number).filter(Number.isFinite);
+}
+
+// Map a runtime-filter ROW to a HostEvent.UpdateFilters payload filter (updates the VISIBLE chip).
+// Date rows carry a `type` (EXACT_DATE / EXACT_DATE_RANGE) with NUMERIC local-noon epochs (so the chip
+// shows the picked day in the viewer tz); text/number rows omit `type` and pass their values through.
+function activeFilterToLiveboardFilter(f) {
+  const column = (f.columnName || '').trim();
+  const opKey = f.opKey || 'EQ';
+  if (f.dataType === 'date') {
+    // Stored values are UTC epochs → back to the calendar day (ISO) → local-noon epoch for display.
+    const noons = (f.values || []).map(epochSecToISO).filter(Boolean).map(isoToLocalNoonEpochSec);
+    if (RANGE_OPERATORS.has(opKey)) return { column, oper: 'BW_INC', values: noons, type: 'EXACT_DATE_RANGE' };
+    return { column, oper: opKey, values: noons.slice(0, 1), type: 'EXACT_DATE' };
+  }
+  return { column, oper: opKey, values: f.values || [] };
+}
+
+// spec: 'YYYY-MM-DD' (single day) | { from, to } (range) | null (clear). Routes to the runtime-filter
+// layer or the visible Liveboard-filter layer per state.dateBtn.applyVia.
+function applyDateFilter(column, spec) {
   if (!currentEmbed) { toast('Render a liveboard first.'); return; }
+  if ((getState().dateBtn?.applyVia || 'runtime') === 'liveboard') applyDateFilterViaLiveboard(column, spec);
+  else applyDateFilterViaRuntime(column, spec);
+}
+
+// Runtime-filter layer (HostEvent.UpdateRuntimeFilters): an INVISIBLE filter that ANDs with the
+// board's own filters and never shows in the filter bar. We resend the existing runtime/filter-bar
+// filters (minus this column) alongside it. Both a single day and a {from,to} range go as BW_INC over
+// UTC epoch-second bounds (NUMBERS) — a full-day span matches DATE and DATE_TIME columns. null clears.
+function applyDateFilterViaRuntime(column, spec) {
   const base = buildParentRuntimeFilters().filter(f => f.columnName !== column);
   let logVal = 'cleared';
-  if (iso) {
-    const [y, m, d] = iso.split('-').map(Number);
-    const epoch = Math.floor(new Date(y, m - 1, d).getTime() / 1000);
-    base.push({ columnName: column, operator: RuntimeFilterOp.EQ, values: [String(epoch)] });
-    logVal = `EQ ${iso} (epoch ${epoch})`;
+  let toastMsg = 'Date filter cleared';
+  if (spec && typeof spec === 'object' && spec.from && spec.to) {
+    const [startIso, endIso] = isoToEpochSec(spec.from) <= isoToEpochSec(spec.to)
+      ? [spec.from, spec.to] : [spec.to, spec.from];
+    const lo = isoToEpochSec(startIso), hi = isoToEndOfDayEpochSec(endIso);
+    base.push({ columnName: column, operator: RuntimeFilterOp.BW_INC, values: [lo, hi] });
+    logVal = `BW_INC ${startIso}…${endIso} (epoch ${lo}–${hi})`;
+    toastMsg = `Date filter: ${column} ${startIso} → ${endIso}`;
+  } else if (typeof spec === 'string' && spec) {
+    const lo = isoToEpochSec(spec), hi = isoToEndOfDayEpochSec(spec);
+    base.push({ columnName: column, operator: RuntimeFilterOp.BW_INC, values: [lo, hi] });
+    logVal = `BW_INC ${spec} (full day, epoch ${lo}–${hi})`;
+    toastMsg = `Date filter: ${column} on ${spec}`;
   }
   try {
-    currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, base);
-    logEvent('CustomAction', `Date filter → ${column} ${logVal}`);
-    toast(iso ? `Date filter: ${column} on ${iso}` : 'Date filter cleared', 'success');
+    // base is the full desired set (existing filters minus this column, plus the new date filter, or
+    // just the rest on clear) — pushRuntimeFilters clears any previously-applied column that dropped off.
+    pushRuntimeFilters(base);
+    logEvent('CustomAction', `Date filter (runtime) → ${column} ${logVal}`);
+    toast(toastMsg, 'success');
   } catch (e) {
     logEvent('CustomAction', `✗ Date filter: ${e.message}`);
     toast('Could not apply date filter.', 'error');
+  }
+}
+
+// Visible Liveboard-filter layer (HostEvent.UpdateFilters): updates the VALUE of a date filter the
+// board already has on this column (moves the on-screen chip). Sends the date as a NUMERIC epoch at
+// local NOON + a date `type` (EXACT_DATE / EXACT_DATE_RANGE) so the chip shows the picked day in the
+// viewer tz (a YYYY-MM-DD string renders one day early west of UTC). Requires the column to already be
+// a filter on the board; clearing a date filter via empty values is not supported by the SDK.
+function applyDateFilterViaLiveboard(column, spec) {
+  if (!spec) {
+    toast('Clearing a Liveboard date filter isn’t supported by the SDK — reset the board, or switch Apply via → Runtime filter.', 'error');
+    logEvent('CustomAction', `✗ Date filter (liveboard): clear not supported`);
+    return;
+  }
+  let filter, logVal, toastMsg;
+  if (typeof spec === 'object' && spec.from && spec.to) {
+    const [startIso, endIso] = spec.from <= spec.to ? [spec.from, spec.to] : [spec.to, spec.from];
+    filter = { column, oper: 'BW_INC', values: [isoToLocalNoonEpochSec(startIso), isoToLocalNoonEpochSec(endIso)], type: 'EXACT_DATE_RANGE' };
+    logVal = `EXACT_DATE_RANGE ${startIso}…${endIso}`;
+    toastMsg = `Liveboard filter: ${column} ${startIso} → ${endIso}`;
+  } else {
+    filter = { column, oper: 'EQ', values: [isoToLocalNoonEpochSec(spec)], type: 'EXACT_DATE' };
+    logVal = `EXACT_DATE ${spec}`;
+    toastMsg = `Liveboard filter: ${column} on ${spec}`;
+  }
+  try {
+    currentEmbed.trigger(HostEvent.UpdateFilters, { filter });
+    logEvent('CustomAction', `Date filter (liveboard) → ${column} ${logVal}`);
+    toast(toastMsg, 'success');
+  } catch (e) {
+    logEvent('CustomAction', `✗ Date filter: ${e.message}`);
+    toast(`Could not update the Liveboard filter — is “${column}” a filter on this board?`, 'error');
   }
 }
 
@@ -1491,8 +1651,10 @@ function openDatePicker() {
   const column = (s.dateBtn?.column || 'Order Date').trim() || 'Order Date';
   document.getElementById('date-modal')?.remove();
 
-  let mode = 'today';           // 'today' | 'on'
+  let mode = 'today';           // 'today' | 'on' | 'range'
   let onDate = todayISO();
+  let fromDate = todayISO();
+  let toDate = todayISO();
 
   const modal = el('div', 'modal'); modal.id = 'date-modal';
   const scrim = el('div', 'modal-scrim');
@@ -1508,7 +1670,10 @@ function openDatePicker() {
   htxt.appendChild(el('div', 'modal-title', 'Date filter'));
   const sub = el('div', 'modal-sub');
   const strong = document.createElement('strong'); strong.textContent = column;
-  sub.append('Applies to ', strong, ' via HostEvent.UpdateRuntimeFilters.');
+  const viaLiveboard = (s.dateBtn?.applyVia || 'runtime') === 'liveboard';
+  sub.append('Applies to ', strong, viaLiveboard
+    ? ' via HostEvent.UpdateFilters (updates the visible Liveboard filter).'
+    : ' via HostEvent.UpdateRuntimeFilters (invisible; ANDs with existing filters).');
   htxt.appendChild(sub);
   const xbtn = el('button', 'modal-close', '✕'); xbtn.type = 'button'; xbtn.addEventListener('click', close);
   head.append(htxt, xbtn);
@@ -1519,6 +1684,7 @@ function openDatePicker() {
     body.appendChild(enumSelect('When', mode, [
       { value: 'today', label: 'Today (recomputed on each click)' },
       { value: 'on', label: 'On a specific date' },
+      { value: 'range', label: 'Between two dates (range)' },
     ], v => { mode = v; renderBody(); }));
     if (mode === 'on') {
       const fld = el('div', 'fld');
@@ -1527,6 +1693,19 @@ function openDatePicker() {
       inp.addEventListener('change', () => { onDate = inp.value; });
       fld.appendChild(inp);
       body.appendChild(fld);
+    } else if (mode === 'range') {
+      const fromF = el('div', 'fld');
+      fromF.appendChild(el('label', 'fld-lbl', 'From'));
+      const fromInp = el('input', 'inp'); fromInp.type = 'date'; fromInp.value = fromDate;
+      fromInp.addEventListener('change', () => { fromDate = fromInp.value; });
+      fromF.appendChild(fromInp);
+      const toF = el('div', 'fld');
+      toF.appendChild(el('label', 'fld-lbl', 'To'));
+      const toInp = el('input', 'inp'); toInp.type = 'date'; toInp.value = toDate;
+      toInp.addEventListener('change', () => { toDate = toInp.value; });
+      toF.appendChild(toInp);
+      toF.appendChild(el('div', 'fld-hint', 'Sent as RuntimeFilterOp.BW_INC (between, inclusive) with two epoch-second values.'));
+      body.append(fromF, toF);
     }
   };
   renderBody();
@@ -1537,9 +1716,14 @@ function openDatePicker() {
   const cancel = el('button', 'sec-apply ghost', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', close);
   const go = el('button', 'sec-apply', 'Apply'); go.type = 'button';
   go.addEventListener('click', () => {
-    const iso = mode === 'today' ? todayISO() : onDate;
-    if (!iso) { toast('Pick a date.'); return; }
-    applyDateFilter(column, iso);
+    if (mode === 'range') {
+      if (!fromDate || !toDate) { toast('Pick both a From and a To date.'); return; }
+      applyDateFilter(column, { from: fromDate, to: toDate });
+    } else {
+      const iso = mode === 'today' ? todayISO() : onDate;
+      if (!iso) { toast('Pick a date.'); return; }
+      applyDateFilter(column, iso);
+    }
     close();
   });
   foot.append(clear, cancel, go);
@@ -1552,64 +1736,171 @@ function openDatePicker() {
 // — Runtime filters (live, HostEvent) —
 function sectionFilters(s) {
   const c = el('div', 'sec-body');
-  c.appendChild(el('div', 'sec-note', 'Applied live via HostEvent.UpdateRuntimeFilters — no re-render needed.'));
-  c.appendChild(el('div', 'sec-note sec-note--warn',
-    '⚠ Not a security boundary. Runtime filters become visible URL params the user can edit — use them for drill-down/convenience only. For tenant isolation or per-user data, enforce it server-side with RLS / ABAC (mint a custom token with variable_values).'));
+  const via = s.activeFilterVia || 'runtime';
+  // Apply-mechanism selector: the invisible runtime layer vs the board's own visible filter chips.
+  c.appendChild(enumSelect('Apply via', via, [
+    { value: 'runtime', label: 'Runtime filter (invisible, ANDs)' },
+    { value: 'liveboard', label: 'Liveboard filter (updates visible chip)' },
+  ], v => { setState({ activeFilterVia: v }); renderInspector(); },
+    'Runtime = HostEvent.UpdateRuntimeFilters: an invisible layer that ANDs with the board’s own filters (never shows in the filter bar). Liveboard = HostEvent.UpdateFilters: updates the VALUE of a filter the board already has (moves the on-screen chip). Liveboard mode needs the column to already be a filter on the board.'));
+  if (via === 'liveboard') {
+    c.appendChild(el('div', 'sec-note',
+      'Updates existing Liveboard filter chips via HostEvent.UpdateFilters — the change shows in the filter bar. The column must already be a filter on the board; clearing a filter this way isn’t supported by the SDK.'));
+  } else {
+    c.appendChild(el('div', 'sec-note', 'Applied live via HostEvent.UpdateRuntimeFilters — no re-render needed.'));
+    c.appendChild(el('div', 'sec-note sec-note--warn',
+      '⚠ Not a security boundary. Runtime filters become visible URL params the user can edit — use them for drill-down/convenience only. For tenant isolation or per-user data, enforce it server-side with RLS / ABAC (mint a custom token with variable_values).'));
+  }
+  // Type-aware guidance: dates are handled specially and operators are scoped to the column type.
+  c.appendChild(el('div', 'sec-note',
+    'Set each column\'s type. Date columns get a date picker; the operator list is scoped to the type — ' +
+    'dates: on / before / after / between · text: equals / contains / in.'));
   const rows = el('div', 'rows');
-  s.activeFilters.forEach((f, i) => rows.appendChild(filterRow(f, i)));
+  if (s.activeFilters.length) {
+    s.activeFilters.forEach((f, i) => rows.appendChild(filterRow(f, i)));
+  } else {
+    rows.appendChild(el('div', 'frow-empty', 'No filters yet — add a column to filter the board.'));
+  }
   c.appendChild(rows);
   const add = el('button', 'sec-add', '+ Add filter');
   add.addEventListener('click', () => {
-    setState({ activeFilters: [...getState().activeFilters, { columnName: '', opKey: 'EQ', values: [] }] });
+    setState({ activeFilters: [...getState().activeFilters, { columnName: '', dataType: 'text', opKey: 'EQ', values: [] }] });
     renderInspector();
   });
-  const apply = el('button', 'sec-apply', 'Apply filters');
+  const apply = el('button', 'sec-apply', via === 'liveboard' ? 'Apply to Liveboard filters' : 'Apply filters');
   apply.addEventListener('click', () => {
     if (!currentEmbed) { toast('No active embed — render one first.'); return; }
-    // Read directly from the DOM so uncommitted input values (not yet blurred) are captured.
-    const frows = rows.querySelectorAll('.frow');
-    const filters = [];
-    const stateSync = [];
-    frows.forEach(row => {
-      const inputs = row.querySelectorAll('.inp');
-      const col = inputs[0]?.value.trim();
-      const opKey = inputs[1]?.value || 'EQ';
-      const valStr = inputs[2]?.value.trim() || '';
-      if (!col) return;
-      const values = valStr ? valStr.split(',').map(v => v.trim()).filter(Boolean) : [];
-      const operator = RuntimeFilterOp[opKey];
-      if (operator === undefined) { toast(`Unknown operator: ${opKey}`); return; }
-      filters.push({ columnName: col, operator, values });
-      stateSync.push({ columnName: col, opKey, values });
-    });
-    if (!filters.length) { toast('Add at least one filter with a column name.'); return; }
-    try {
-      currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, filters);
-      setState({ activeFilters: stateSync }); // keep state in sync for code view
-      logEvent('HostEvent', `UpdateRuntimeFilters (${filters.length}): ${stateSync.map(f => f.columnName).join(', ')}`);
-      refreshCode();
-    } catch (e) {
-      logEvent('HostEvent', `✗ UpdateRuntimeFilters: ${e.message}`);
-      toast(`Filter error: ${e.message}`);
+    // Each row's widgets commit to state on change; blur the focused field to flush an in-progress edit.
+    if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+    // Validate + collect the valid rows (shared by both apply modes).
+    const valid = [];
+    for (const f of getState().activeFilters) {
+      const col = (f.columnName || '').trim();
+      if (!col) continue;
+      const opKey = f.opKey || 'EQ';
+      if (RuntimeFilterOp[opKey] === undefined) { toast(`Unknown operator: ${opKey}`); return; }
+      const values = dateAwareValues(f);
+      if (RANGE_OPERATORS.has(opKey) && values.length !== 2) {
+        toast(`${opKey} is a "between" operator — needs two values${f.dataType === 'date' ? ' (a From and a To date).' : ' (min, max).'}`);
+        return;
+      }
+      if (!values.length) { toast(`Filter on "${col}" has no value.`); return; }
+      valid.push(f);
+    }
+    if (!valid.length) { toast('Add at least one filter with a column name.'); return; }
+    if ((getState().activeFilterVia || 'runtime') === 'liveboard') {
+      // Update the board's own (visible) filters. One UpdateFilters per row — the documented form.
+      try {
+        valid.forEach(f => currentEmbed.trigger(HostEvent.UpdateFilters, { filter: activeFilterToLiveboardFilter(f) }));
+        logEvent('HostEvent', `UpdateFilters (${valid.length}): ${valid.map(f => f.columnName).join(', ')}`);
+        refreshCode();
+      } catch (e) { logEvent('HostEvent', `✗ UpdateFilters: ${e.message}`); toast(`Filter error: ${e.message}`); }
+    } else {
+      // Invisible runtime layer. Send the full desired set (active + custom filter-bar); pushRuntimeFilters
+      // adds empty-values clears for columns applied earlier but removed now, so removals actually stick.
+      try {
+        const desired = buildParentRuntimeFilters().filter(f => f.columnName && f.values && f.values.length);
+        pushRuntimeFilters(desired);
+        refreshCode();
+      } catch (e) { toast(`Filter error: ${e.message}`); }
     }
   });
   c.append(add, apply);
   return accordion('Runtime filters', s.activeFilters.length, c);
 }
+
+// A single runtime-filter row: [ column | type | operator | value widget | ✕ ]. The operator list
+// and the value widget both adapt to the chosen data type — Date shows a date picker (or two, for a
+// range) that stores epoch seconds; Text/Number keep a comma-separated text box. Every widget commits
+// to state on change so Apply (and the code view) read a normalized filter.
 function filterRow(f, i) {
-  const r = el('div', 'frow');
-  const col = el('input', 'inp inp-sm'); col.placeholder = 'Column'; col.value = f.columnName;
-  const op = el('select', 'inp inp-sm'); op.innerHTML = OPERATORS.map(o => `<option${o === f.opKey ? ' selected' : ''}>${o}</option>`).join('');
-  const val = el('input', 'inp inp-sm'); val.placeholder = 'value(s), comma-sep'; val.value = (f.values || []).join(', ');
+  const dataType = OP_GROUPS[f.dataType] ? f.dataType : 'text';
+  const r = el('div', 'frow frow--typed');
+  const col = el('input', 'inp inp-sm frow-col'); col.placeholder = 'Column'; col.value = f.columnName || '';
+  const typeSel = el('select', 'inp inp-sm frow-type');
+  typeSel.innerHTML = [['text', 'Text'], ['number', 'Number'], ['date', 'Date']]
+    .map(([v, l]) => `<option value="${v}"${v === dataType ? ' selected' : ''}>${l}</option>`).join('');
+  const op = el('select', 'inp inp-sm frow-op');
+  const valWrap = el('div', 'frow-valwrap');
   const del = el('button', 'frow-x', '✕');
+
+  const renderOps = () => {
+    const list = opsForType(typeSel.value);
+    const cur = list.includes(op.value) ? op.value : (list.includes(f.opKey) ? f.opKey : list[0]);
+    const label = typeSel.value === 'date' ? (o => DATE_OP_LABEL[o] || o) : (o => o);
+    op.innerHTML = list.map(o => `<option value="${o}"${o === cur ? ' selected' : ''}>${label(o)}</option>`).join('');
+  };
+  const renderValue = () => {
+    valWrap.innerHTML = '';
+    const isRange = RANGE_OPERATORS.has(op.value);
+    if (typeSel.value === 'date') {
+      if (isRange) {
+        const from = el('input', 'inp inp-sm frow-date-from'); from.type = 'date'; from.value = epochSecToISO(f.values?.[0]);
+        const to = el('input', 'inp inp-sm frow-date-to'); to.type = 'date'; to.value = epochSecToISO(f.values?.[1]);
+        from.addEventListener('change', commit); to.addEventListener('change', commit);
+        valWrap.append(from, to);
+      } else {
+        const d = el('input', 'inp inp-sm frow-date'); d.type = 'date'; d.value = epochSecToISO(f.values?.[0]);
+        d.addEventListener('change', commit);
+        valWrap.append(d);
+      }
+    } else {
+      const val = el('input', 'inp inp-sm frow-val');
+      val.placeholder = isRange ? 'min, max' : 'value(s), comma-sep';
+      val.value = (f.values || []).join(', ');
+      val.addEventListener('change', commit);
+      valWrap.append(val);
+    }
+  };
+  const readValues = () => {
+    if (typeSel.value === 'date') {
+      if (RANGE_OPERATORS.has(op.value)) {
+        const from = valWrap.querySelector('.frow-date-from')?.value;
+        const to = valWrap.querySelector('.frow-date-to')?.value;
+        if (!from || !to) return [];
+        const a = isoToEpochSec(from), b = isoToEpochSec(to);
+        return [String(Math.min(a, b)), String(Math.max(a, b))];
+      }
+      const d = valWrap.querySelector('.frow-date')?.value;
+      return d ? [String(isoToEpochSec(d))] : [];
+    }
+    const raw = valWrap.querySelector('.frow-val')?.value.trim() || '';
+    return raw ? raw.split(',').map(v => v.trim()).filter(Boolean) : [];
+  };
   const commit = () => {
     const list = [...getState().activeFilters];
-    list[i] = { columnName: col.value.trim(), opKey: op.value, values: val.value.split(',').map(v => v.trim()).filter(Boolean) };
+    list[i] = { columnName: col.value.trim(), dataType: typeSel.value, opKey: op.value, values: readValues() };
     setState({ activeFilters: list });
   };
-  col.addEventListener('change', commit); op.addEventListener('change', commit); val.addEventListener('change', commit);
-  del.addEventListener('click', () => { const list = [...getState().activeFilters]; list.splice(i, 1); setState({ activeFilters: list }); renderInspector(); });
-  r.append(col, op, val, del);
+
+  col.addEventListener('change', commit);
+  // Changing type or operator swaps the operator list / value widget, so re-render this row in place.
+  typeSel.addEventListener('change', () => { renderOps(); renderValue(); commit(); });
+  op.addEventListener('change', () => { renderValue(); commit(); });
+  del.addEventListener('click', () => {
+    const removed = getState().activeFilters[i];
+    const list = [...getState().activeFilters]; list.splice(i, 1); setState({ activeFilters: list });
+    // Removing a row must actually clear it on the board. UpdateRuntimeFilters appends, so send an
+    // explicit empty-values entry for that column — but only if it was applied and no remaining row
+    // still uses it (otherwise we'd wipe a filter the user still wants).
+    const stillUsed = list.some(f => f.columnName === removed?.columnName);
+    if (currentEmbed && removed?.columnName && appliedRuntimeCols.has(removed.columnName) && !stillUsed) {
+      try {
+        currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, [{ columnName: removed.columnName, operator: RuntimeFilterOp.EQ, values: [] }]);
+        appliedRuntimeCols.delete(removed.columnName);
+        logEvent('HostEvent', `UpdateRuntimeFilters: cleared ${removed.columnName}`);
+      } catch (e) { logEvent('HostEvent', `✗ clear ${removed.columnName}: ${e.message}`); }
+    }
+    renderInspector();
+    refreshCode();
+  });
+
+  renderOps();
+  renderValue();
+  // Card layout (see .frow--typed): line 1 = column + ✕ · line 2 = type | operator · line 3 = value widget.
+  const head = el('div', 'frow-head'); head.append(col, del);
+  const controls = el('div', 'frow-controls'); controls.append(typeSel, op);
+  r.append(head, controls, valWrap);
   return r;
 }
 
@@ -2698,11 +2989,12 @@ function cfbSortValues(colName, values) {
 function cfbApply() {
   persistCfb();
   if (!currentEmbed) return;
-  // Merge cfb selections with any Inspector runtime filters so neither overwrites the other.
-  // UpdateRuntimeFilters has replace semantics, so we must always send the full combined set.
-  const filters = buildParentRuntimeFilters();
+  // Merge cfb selections with any Inspector runtime filters so neither overwrites the other. Send the
+  // full combined set; pushRuntimeFilters clears any column that was applied before but is now removed
+  // (UpdateRuntimeFilters appends, so a de-selected column stays on the board unless we clear it).
+  const filters = buildParentRuntimeFilters().filter(f => f.columnName && f.values && f.values.length);
   try {
-    currentEmbed.trigger(HostEvent.UpdateRuntimeFilters, filters);
+    pushRuntimeFilters(filters);
     const cfbActive = Object.entries(cfbSelected).filter(([, v]) => v?.length);
     const desc = cfbActive.length ? cfbActive.map(([c, v]) => `${c}=[${v.join(',')}]`).join('; ') : 'cleared';
     logEvent('CustomFilter', desc);
@@ -2836,6 +3128,13 @@ window.__onCustomAction = async (payload) => {
   const reg = customActionRegistry[id];
   if (!reg) return;
   const row = extractRow(payload);
+  // url/writeback/drill actions consume the CLICKED ROW's values. A row only exists when the action
+  // fires at a data point — i.e. Target = Visualization (best with a context-menu position). A
+  // PRIMARY + LIVEBOARD action has no clicked row, so placeholders resolve empty. Surface that as a
+  // hint rather than silently opening a URL with blank {{…}} values.
+  if (['url', 'writeback', 'drill'].includes(reg.type) && Object.keys(row).length === 0) {
+    logEvent('CustomAction', `⚠ "${reg.label}" received no row data — set Target = Visualization (context menu) so the clicked row is passed.`);
+  }
   if (reg.type === 'url' && reg.urlTemplate) {
     const url = reg.urlTemplate.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, c) => encodeURIComponent(row[c.trim()] ?? ''));
     window.open(url, '_blank', 'noopener');
@@ -2951,7 +3250,7 @@ function buildParentRuntimeFilters() {
     .filter(([, v]) => v && v.length)
     .map(([col, vals]) => ({ columnName: col, operator: RuntimeFilterOp.IN, values: vals }));
   const fromActive = (s.activeFilters || [])
-    .map(f => ({ columnName: f.columnName, operator: RuntimeFilterOp[f.opKey] ?? RuntimeFilterOp.IN, values: f.values }));
+    .map(f => ({ columnName: f.columnName, operator: RuntimeFilterOp[f.opKey] ?? RuntimeFilterOp.IN, values: dateAwareValues(f) }));
   return [...fromActive, ...fromCfb];
 }
 
@@ -3407,16 +3706,34 @@ function generateCode() {
   if (dateBtn) {
     const col = esc(s.dateBtn?.column || 'Order Date');
     L.push('');
-    L.push('// "Date" PRIMARY button → apply Today / a specific date as a runtime filter. Host-controlled,');
-    L.push('// so there is no native date-dialog default (Between/Yesterday) to fight. Replaces the whole set.');
-    L.push('embed.on(EmbedEvent.CustomAction, (payload) => {');
-    L.push(`  if (payload.id !== '${DATE_ACTION_ID}') return;`);
-    L.push('  const iso = prompt(\'Date (YYYY-MM-DD)\', new Date().toISOString().slice(0, 10)); // swap for your own UI');
-    L.push('  if (!iso) return;');
-    L.push('  const [y, m, d] = iso.split(\'-\').map(Number);');
-    L.push('  const epoch = Math.floor(new Date(y, m - 1, d).getTime() / 1000); // TS date runtime-filter = epoch seconds');
-    L.push(`  embed.trigger(HostEvent.UpdateRuntimeFilters, [{ columnName: '${col}', operator: RuntimeFilterOp.EQ, values: [String(epoch)] }]);`);
-    L.push('});');
+    if ((s.dateBtn?.applyVia || 'runtime') === 'liveboard') {
+      L.push('// "Date" PRIMARY button → update the VISIBLE Liveboard date filter (HostEvent.UpdateFilters).');
+      L.push('// This moves the on-screen filter chip. The column must already be a filter on the board.');
+      L.push('embed.on(EmbedEvent.CustomAction, (payload) => {');
+      L.push(`  if (payload.id !== '${DATE_ACTION_ID}') return;`);
+      L.push('  const iso = prompt(\'Date (YYYY-MM-DD)\', new Date().toISOString().slice(0, 10)); // swap for your own UI');
+      L.push('  if (!iso) return;');
+      L.push('  const [y, m, d] = iso.split(\'-\').map(Number);');
+      L.push('  // Send a NUMERIC epoch at local NOON so the chip shows the picked day in the viewer tz');
+      L.push('  // (a YYYY-MM-DD string / UTC-midnight value renders one day early west of UTC).');
+      L.push('  const noon = Math.floor(new Date(y, m - 1, d, 12).getTime() / 1000);');
+      L.push(`  embed.trigger(HostEvent.UpdateFilters, { filter: { column: '${col}', oper: 'EQ', values: [noon], type: 'EXACT_DATE' } });`);
+      L.push('});');
+    } else {
+      L.push('// "Date" PRIMARY button → apply a date as an INVISIBLE runtime filter (HostEvent.UpdateRuntimeFilters).');
+      L.push('// Does not touch the filter bar; ANDs with the board’s own filters. Resends the full set (replace).');
+      L.push('embed.on(EmbedEvent.CustomAction, (payload) => {');
+      L.push(`  if (payload.id !== '${DATE_ACTION_ID}') return;`);
+      L.push('  const iso = prompt(\'Date (YYYY-MM-DD)\', new Date().toISOString().slice(0, 10)); // swap for your own UI');
+      L.push('  if (!iso) return;');
+      L.push('  const [y, m, d] = iso.split(\'-\').map(Number);');
+      L.push('  // TS date runtime-filters take UTC epoch SECONDS as NUMBERS (not strings). Filter the whole');
+      L.push('  // day [00:00:00 … 23:59:59] with BW_INC so it works for DATE and DATE_TIME columns alike.');
+      L.push('  const lo = Math.floor(Date.UTC(y, m - 1, d) / 1000);');
+      L.push('  const hi = Math.floor(Date.UTC(y, m - 1, d + 1) / 1000) - 1;');
+      L.push(`  embed.trigger(HostEvent.UpdateRuntimeFilters, [{ columnName: '${col}', operator: RuntimeFilterOp.BW_INC, values: [lo, hi] }]);`);
+      L.push('});');
+    }
   }
   if (['liveboard', 'liveboard-custom', 'viz', 'ai-highlights'].includes(s.section)) {
     // Q2 — no server-side save webhook exists; this client event is the host's save signal.
@@ -3518,12 +3835,32 @@ function generateCode() {
       L.push('}');
     }
   }
-  if (s.activeFilters.length) {
+  if (s.activeFilters.length && (s.activeFilterVia || 'runtime') === 'liveboard') {
+    // Liveboard-filter mode: update the board's own (visible) filters via HostEvent.UpdateFilters.
+    L.push(''); L.push('// Filters — update the VISIBLE Liveboard filter chips (HostEvent.UpdateFilters).');
+    L.push('// Each column must already be a filter on the board; dates take YYYY-MM-DD + a `type`.');
+    s.activeFilters.forEach(f => {
+      const lf = activeFilterToLiveboardFilter(f);
+      // Date epochs are numbers (unquoted); text/number values stay quoted strings.
+      const vals = lf.values.map(v => typeof v === 'number' ? String(v) : `'${esc(v)}'`).join(', ');
+      const typeStr = lf.type ? `, type: '${lf.type}'` : '';
+      const note = lf.type ? `  // ${f.values.map(v => epochSecToISO(v) || v).join(' … ')} (local noon epoch → shows the picked day)` : '';
+      L.push(`embed.trigger(HostEvent.UpdateFilters, { filter: { column: '${esc(lf.column)}', oper: '${esc(lf.oper)}', values: [${vals}]${typeStr} } });${note}`);
+    });
+  } else if (s.activeFilters.length) {
     L.push(''); L.push('// Runtime filters — applied live, no re-render:');
     L.push('// NOT a security boundary: these surface as editable URL params. For tenant isolation or');
     L.push('// per-user data, enforce server-side with RLS/ABAC (custom token + variable_values).');
     L.push('embed.trigger(HostEvent.UpdateRuntimeFilters, [');
-    s.activeFilters.forEach(f => L.push(`  { columnName: '${esc(f.columnName)}', operator: RuntimeFilterOp.${f.opKey}, values: [${f.values.map(v => `'${esc(v)}'`).join(', ')}] },`));
+    s.activeFilters.forEach(f => {
+      // Date filters carry epoch-second values — annotate them with the human date so the copied code is readable.
+      const isDate = f.dataType === 'date' && f.values.length;
+      // Date epochs must be NUMBERS (unquoted); text/number values stay quoted strings.
+      const vals = f.values.map(v => isDate ? String(Number(v)) : `'${esc(v)}'`).join(', ');
+      const dateNote = isDate
+        ? `  // ${f.values.map(v => epochSecToISO(v) || v).join(f.values.length === 2 ? ' … ' : '')} (UTC, epoch seconds)` : '';
+      L.push(`  { columnName: '${esc(f.columnName)}', operator: RuntimeFilterOp.${f.opKey}, values: [${vals}] },${dateNote}`);
+    });
     L.push(']);');
   }
   // Custom filter bar — record the value display order chosen in the playground.
@@ -3684,6 +4021,34 @@ function flowSteps(section) {
 
 const LANE_LABEL = { host: 'Your page', iframe: 'SDK iframe', server: 'TS server' };
 
+// Friendly, user-facing captions for the loading-overlay progress checklist (keyed by step.key).
+// Falls back to the technical step.title if a key isn't listed.
+const LOADING_STEP_LABEL = {
+  init: 'Initializing SDK', embed: 'Creating embed', auth: 'Authenticating session',
+  bridge: 'Opening connection', load: 'Fetching data & running queries', rendered: 'Rendering tiles',
+  pick: 'Selecting data source', suggest: 'Suggesting questions', answer: 'Generating answer', render: 'Rendering panel',
+};
+
+// Paint the live lifecycle checklist on the loading overlay (✓ done · ◌ active · ○ pending · ✕ failed)
+// so a slow liveboard switch visibly shows progress instead of a bare spinner. Reads the same flow
+// state renderFlow() uses; called from renderFlow() so it stays in sync as EmbedEvents arrive.
+function renderLoadingProgress() {
+  const root = document.getElementById('loading-steps');
+  if (!root) return;
+  root.innerHTML = '';
+  if (!flowCurrent.length) return;
+  flowCurrent.forEach((step, i) => {
+    const failed = i === flowFailed;
+    const done = flowFailed < 0 && i <= flowReached;
+    const active = flowFailed < 0 && i === flowActive;
+    const row = el('div', 'lp-step' + (done ? ' lp-done' : '') + (active ? ' lp-active' : '') + (failed ? ' lp-failed' : ''));
+    row.appendChild(el('span', 'lp-mark', failed ? '✕' : done ? '✓' : active ? '' : '○'));
+    const label = LOADING_STEP_LABEL[step.key] || step.title;
+    row.appendChild(el('span', 'lp-label', active ? `${label}…` : label));
+    root.appendChild(row);
+  });
+}
+
 // Runtime flow state.
 let flowCurrent = [];   // the step objects for the active section
 let flowReached = -1;   // furthest done index
@@ -3720,6 +4085,7 @@ function flowFailAt(key) {
 }
 
 function renderFlow() {
+  renderLoadingProgress(); // keep the loading-overlay checklist in lockstep with the lifecycle
   const root = $('#flow-diagram');
   if (!root) return;
   if (!flowCurrent.length) {

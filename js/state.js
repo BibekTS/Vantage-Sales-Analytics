@@ -44,7 +44,8 @@ export function defaultState() {
     disabledActions: [],
     customActions: [],                // [{ id, label, pos, type, webhook, urlTemplate }]
     runtimeParameters: [],            // [{ name, value }]
-    activeFilters: [],                // [{ columnName, opKey, values }]
+    activeFilters: [],                // [{ columnName, dataType, opKey, values }]
+    activeFilterVia: 'runtime',       // 'runtime' = UpdateRuntimeFilters (invisible) | 'liveboard' = UpdateFilters (visible chip)
     cfbCols: [],                      // custom-liveboard filter bar: ordered column names
     cfbSelected: {},                  // custom-liveboard filter bar: { colName: [selectedValues] }
     cfbSort: {},                      // custom-liveboard filter bar: { colName: 'asc'|'desc'|'custom'|'metric' }
@@ -74,7 +75,8 @@ export function defaultState() {
     // (Between/Yesterday) the SDK can't preset. Off by default; toggled in Display options.
     dateBtn: {
       enabled: false,
-      column: 'Order Date',           // runtime-filter target column
+      column: 'Order Date',           // target column
+      applyVia: 'runtime',            // 'runtime' = UpdateRuntimeFilters (invisible) | 'liveboard' = UpdateFilters (visible chip)
     },
     // Personal liveboards — per-source-board editable copies, shown as a host-side tab strip
     // (Standard | your copies | ＋ Personalize). Each copy is a full, user-owned clone made via
@@ -265,7 +267,8 @@ function sanitize(raw) {
     .map(p => ({ name: str(p?.name, 256), value: str(p?.value) }));
 
   if (has('activeFilters')) out.activeFilters = arr(raw.activeFilters)
-    .map(f => ({ columnName: str(f?.columnName, 256), opKey: str(f?.opKey, 32), values: strArr(f?.values) }));
+    .map(f => ({ columnName: str(f?.columnName, 256), dataType: ['text', 'number', 'date'].includes(f?.dataType) ? f.dataType : 'text', opKey: str(f?.opKey, 32), values: strArr(f?.values) }));
+  if (has('activeFilterVia')) out.activeFilterVia = raw.activeFilterVia === 'liveboard' ? 'liveboard' : 'runtime';
 
   if (has('cfbCols')) out.cfbCols = strArr(raw.cfbCols);
   if (has('cfbSelected')) out.cfbSelected = cleanMap(raw.cfbSelected, v => strArr(v));
@@ -308,6 +311,7 @@ function sanitize(raw) {
     out.dateBtn = {
       enabled: bool(raw.dateBtn.enabled),
       column: str(raw.dateBtn.column, 256) || 'Order Date',
+      applyVia: raw.dateBtn.applyVia === 'liveboard' ? 'liveboard' : 'runtime',
     };
   }
 

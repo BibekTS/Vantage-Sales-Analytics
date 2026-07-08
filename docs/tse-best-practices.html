@@ -1147,7 +1147,7 @@
   <main>
 
     <div class="eyebrow">Best practices · ThoughtSpot Embedded</div>
-    <h1>Everything we know about building on <em>ThoughtSpot Embedded</em>, in one place.</h1>
+    <h1>Everything worth knowing about building on <em>ThoughtSpot Embedded</em>, in one place.</h1>
     <p class="lede">
       <strong>Part 1 — Security (§01–§17):</strong> the auth methods, the two patterns that matter for production embeds, ABAC mechanics, RLS, the token mint endpoint, identity, hardening, and the decision trees that get you to the right architecture. <strong>Part 2 — The embed surface (§18–§22):</strong> the embed components, events and host interop, styling, export, and performance. Pulled together from a dozen working documents into one reference, so your whole team — architects, engineers, security reviewers — shares the same model of how an embedded deployment gets built and secured.
     </p>
@@ -1239,8 +1239,8 @@
         </div>
         <div class="h-side esso">
           <div class="h-tag">CHOICE B · IDENTITY STRATEGY</div>
-          <h3>One TS user per human, or one shared user?</h3>
-          <p>Individual users (each real human has their own TS user record, created via <code>auto_create</code>) vs a single shared service account everyone mints tokens as. Individual users are right for almost everything. Covered in §14.</p>
+          <h3>Does each person get their own ThoughtSpot user account, or does everyone share one service account?</h3>
+          <p>Individual users (each end-user has their own TS user account, created via <code>auto_create</code>) vs a single shared service account everyone mints tokens as. Individual users are right for almost everything. Covered in §14.</p>
         </div>
       </div>
 
@@ -1361,7 +1361,7 @@
         <div class="compare-row-head"><span class="compare-row-num">REQ 01</span>Single IdP for everyone</div>
         <div class="compare-row-body">
           <div class="row-side esso" style="grid-column: 1 / -1; border-right: none;">
-            The TS instance has one OIDC or SAML config. Every user authenticates through that one IdP. <strong style="color: var(--bad); display:inline; margin:0;">Multi-tenant SaaS where each customer has their own IdP breaks this immediately.</strong> Even one-off customer IdPs require per-Org OIDC (different setup, different feature).
+            The TS instance has one OIDC or SAML config. Every user authenticates through that one IdP. <strong style="color: var(--bad); display:inline; margin:0;">Multi-tenant SaaS where each customer has their own IdP breaks this immediately.</strong> Even supporting a single customer's own IdP requires per-Org OIDC (different setup, different feature).
           </div>
         </div>
       </div>
@@ -1613,7 +1613,7 @@
         <div class="info-icon">!</div>
         <div>
           <div class="info-title">Even when EmbeddedSSO is eligible, dynamic ABAC may push you back</div>
-          <div class="info-text">If your filtering needs are per-session (tenant context, allowed customer lists, region overrides that change with shift or escalation), Trusted Auth's token mint hook is the cleanest way to inject those values. EmbeddedSSO requires group claims, pre-persisted variables, or an ACL table joined on <code>ts_username</code> (see §12) to handle ABAC, all of which are real but each trades simplicity for one of: granularity, freshness, or query cost.</div>
+          <div class="info-text">If your filtering needs are per-session (tenant context, allowed customer lists, region overrides that change with on-call shift or support escalation), Trusted Auth's token mint hook is the cleanest way to inject those values. EmbeddedSSO requires group claims, pre-persisted variables, or an ACL table joined on <code>ts_username</code> (see §12) to handle ABAC, all of which are real but each trades simplicity for one of: granularity, freshness, or query cost.</div>
         </div>
       </div>
     </section>
@@ -1693,7 +1693,7 @@
           <div class="step-num" style="background: var(--purple);">9</div>
           <div class="step-body">
             <strong>TS creates user if missing, stamps ABAC, mints JWT</strong>
-            <code>auto_create: true</code> handles JIT provisioning in the same call — no separate API call needed. TS persists the variable values on the user record and returns a signed JWT.
+            <code>auto_create: true</code> handles JIT provisioning in the same call — no separate API call needed. TS persists the variable values on the user account and returns a signed JWT.
           </div>
         </div>
         <div class="step" style="border-left-color: var(--good);">
@@ -1902,7 +1902,7 @@
           <div class="job-num">5</div>
           <div class="job-body">
             <div class="job-title">Call ThoughtSpot's Trusted Auth API<span class="job-tag integration">Integration</span></div>
-            <div class="job-desc">POST to <code>/api/rest/2.0/auth/token/custom</code> with the payload AND the <code>secret_key</code> from your vault. TS validates the secret_key, persists the user record (creates if needed via <code>auto_create</code>), stamps the variable_values, returns a signed JWT.</div>
+            <div class="job-desc">POST to <code>/api/rest/2.0/auth/token/custom</code> with the payload AND the <code>secret_key</code> from your vault. TS validates the secret_key, persists the user account (creates if needed via <code>auto_create</code>), stamps the variable_values, returns a signed JWT.</div>
           </div>
         </div>
         <div class="job">
@@ -2241,7 +2241,7 @@
           <div class="strip-step"><strong>9 · Return JWT</strong>TS returns the signed token</div>
         </div>
 
-        <p>When you POST to <code>/api/rest/2.0/auth/token/custom</code> with <code>auto_create: true</code>, TS checks if a user with that <code>username</code> exists. If yes — it just mints the token. If no — it creates the user record first (with whatever <code>display_name</code>, <code>email</code>, and <code>groups</code> you provided), then mints in the same call. Note that JIT here can add the user to <em>existing</em> groups; it won't build new group hierarchies for you.</p>
+        <p>When you POST to <code>/api/rest/2.0/auth/token/custom</code> with <code>auto_create: true</code>, TS checks if a user with that <code>username</code> exists. If yes — it just mints the token. If no — it creates the user account first (with whatever <code>display_name</code>, <code>email</code>, and <code>groups</code> you provided), then mints in the same call. Note that JIT here can add the user to <em>existing</em> groups; it won't build new group hierarchies for you.</p>
 
         <div class="code-block">
           <div class="code-head"><span>POST /api/rest/2.0/auth/token/custom</span><span class="annot">creates the user on first call, reuses them after</span></div>
@@ -2795,9 +2795,9 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
         <div class="pat-num">PATTERN 2</div>
         <h3>Pre-persisted variable_values via admin API</h3>
         <div class="pat-body">
-          <p>Admin or sync job calls the REST API to write <code>variable_values</code> onto user records ahead of time. EmbeddedSSO authenticates normally. RLS uses <code>ts_var()</code> which reads the persisted values.</p>
+          <p>Admin or sync job calls the REST API to write <code>variable_values</code> onto user accounts ahead of time. EmbeddedSSO authenticates normally. RLS uses <code>ts_var()</code> which reads the persisted values.</p>
           <p class="dim" style="font-style:italic;">Per TS docs: "Persisting values opens up use cases for ABAC outside of the cookieless Trusted Authentication pattern: even if users authenticate via SAML, OIDC, or go directly into ThoughtSpot, an administrator can make a token request with a persist_option to write filter_rules and parameter_values to the user object."</p>
-          <p style="font-size:13px; color:var(--text-mute); font-family:'JetBrains Mono', monospace;">sync job runs nightly → admin mints a token per user via <code>auth/token/custom</code> with <code>persist_option: REPLACE</code> → values stamped on user records → user logs in via EmbeddedSSO → RLS uses <code>ts_var()</code></p>
+          <p style="font-size:13px; color:var(--text-mute); font-family:'JetBrains Mono', monospace;">sync job runs nightly → admin mints a token per user via <code>auth/token/custom</code> with <code>persist_option: REPLACE</code> → values stamped on user accounts → user logs in via EmbeddedSSO → RLS uses <code>ts_var()</code></p>
           <div class="code-block">
             <div class="code-head"><span>nightly sync job · admin REST call</span></div>
 <pre><span class="c">// Run on a schedule from your backend (admin-authenticated).</span>
@@ -2987,7 +2987,7 @@ region <span class="k">in</span> (
         <div class="info-icon">L2</div>
         <div>
           <div class="info-title">ABAC filter rules</div>
-          <div class="info-text">Set via the token mint request (<code>variable_values</code>, or legacy <code>filter_rules</code>) and persisted server-side on the user record at mint time; the signed token is the tamper-proof bearer that carries the session. Multiple clauses combine with <strong>AND</strong>. Cannot be overridden by anything downstream — including runtime filters set in the browser. Covered in §10–§11.</div>
+          <div class="info-text">Set via the token mint request (<code>variable_values</code>, or legacy <code>filter_rules</code>) and persisted server-side on the user account at mint time; the signed token is the tamper-proof bearer that carries the session. Multiple clauses combine with <strong>AND</strong>. Cannot be overridden by anything downstream — including runtime filters set in the browser. Covered in §10–§11.</div>
         </div>
       </div>
 
@@ -3234,18 +3234,18 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
       <h2><span class="num">14</span> Individual users vs <em>shared service account</em></h2>
       <div class="sub">// the second big architectural choice · the answer is almost always individual</div>
 
-      <p>Every embed needs to mint tokens as someone. The choice is: each end-user has their own TS user record (created on demand via <code>auto_create</code>) and tokens are minted as that user — or there's a single shared service account in TS and every end-user's tokens are minted as that service account. The first is right for almost everything. The second is a temptation that ships fragile architecture.</p>
+      <p>Every embed needs to mint tokens as someone. The choice is: each end-user has their own TS user account (created on demand via <code>auto_create</code>) and tokens are minted as that user — or there's a single shared service account in TS and every end-user's tokens are minted as that service account. The first is right for almost everything. The second is a temptation that ships fragile architecture.</p>
 
       <div class="header-compare">
         <div class="h-side esso">
           <div class="h-tag">PATTERN · INDIVIDUAL USERS (recommended)</div>
-          <h3>One TS user record per real human</h3>
-          <p>Alice Reed signs into your app, your backend mints a token with <code>username: "alice@vantagesales.com"</code>, <code>auto_create: true</code>. TS creates the user record on first use, reuses on every subsequent call. Alice's actions are attributed to Alice throughout TS.</p>
+          <h3>One TS user account per person</h3>
+          <p>Alice Reed signs into your app, your backend mints a token with <code>username: "alice@vantagesales.com"</code>, <code>auto_create: true</code>. TS creates the user account on first use, reuses on every subsequent call. Alice's actions are attributed to Alice throughout TS.</p>
         </div>
         <div class="h-side hybrid">
           <div class="h-tag">ANTI-PATTERN · SERVICE ACCOUNT</div>
           <h3>One shared TS user for the whole tenant</h3>
-          <p>Alice signs in, your backend mints a token with <code>username: "svc_vantage_sales"</code>. So does every other user at Vantage Sales. TS has one user record for the whole tenant. Every action is attributed to <code>svc_vantage_sales</code>.</p>
+          <p>Alice signs in, your backend mints a token with <code>username: "svc_vantage_sales"</code>. So does every other user at Vantage Sales. TS has one user account for the whole tenant. Every action is attributed to <code>svc_vantage_sales</code>.</p>
         </div>
       </div>
 
@@ -3262,7 +3262,7 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
         <div class="compare-row-head"><span class="compare-row-num">02</span>RLS / ABAC</div>
         <div class="compare-row-body">
           <div class="row-side good"><span class="pill">Individual</span><strong>Per-user filtering works</strong>Each user's token stamps their own variable_values. Two concurrent users with different regions see different data. Standard RLS.</div>
-          <div class="row-side bad"><span class="pill">Service account</span><strong>Race condition on the user record</strong>If Alice's token request updates variable_values on svc_vantage_sales just as Ben's token request reads them, Ben sees Alice's data. <code>persist_option</code> on a shared user is unsafe under concurrency.</div>
+          <div class="row-side bad"><span class="pill">Service account</span><strong>Race condition on the user account</strong>If Alice's token request updates variable_values on svc_vantage_sales just as Ben's token request reads them, Ben sees Alice's data. <code>persist_option</code> on a shared user is unsafe under concurrency.</div>
         </div>
       </div>
       <div class="compare-row">
@@ -3305,7 +3305,7 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
         </div>
       </div>
 
-      <p>The right column is what a forensics request looks like when "someone at Vantage Sales exported customer PII last Tuesday" turns into "we have no idea which someone." That answer doesn't survive the next audit.</p>
+      <p>The service-account log is what a forensics request looks like when "someone at Vantage Sales exported customer PII last Tuesday" turns into "we have no idea which someone." That answer doesn't survive the next audit.</p>
 
       <h3>The three-question test</h3>
       <p>If the answer to ANY of these is yes — and it almost always is — individual users is the only viable architecture.</p>
@@ -3315,7 +3315,7 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
           <div class="step-num">1</div>
           <div class="step-body">
             <strong>Will different end-users see different data?</strong>
-            If region, customer assignments, role, or any other ABAC varies between users — individual. The race condition on a shared user record makes service account unsafe.
+            If region, customer assignments, role, or any other ABAC varies between users — individual. The race condition on a shared user account makes service account unsafe.
           </div>
         </div>
         <div class="step">
@@ -3487,14 +3487,14 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
 
       <div class="decision-node recommended">
         <div class="dn-tag">C1</div>
-        <div class="dn-label"><span class="dn-pill rec">Default</span>Individual users · one TS user per real human</div>
+        <div class="dn-label"><span class="dn-pill rec">Default</span>Individual users · one TS user per person</div>
         <div class="dn-summary">Created via <code>auto_create: true</code> on first token request. Each user has their own audit trail, ABAC, async context, content. Covered in §14 — almost always the right choice.</div>
       </div>
 
       <div class="decision-node risky">
         <div class="dn-tag">C2</div>
         <div class="dn-label"><span class="dn-pill risk">Avoid</span>Shared service account</div>
-        <div class="dn-summary">One TS user serving many real humans. Breaks audit, RLS concurrency, async jobs, and per-user content. Only acceptable for public read-only dashboards. See §14 for the four trade-offs in detail.</div>
+        <div class="dn-summary">One TS user serving many people. Breaks audit, RLS concurrency, async jobs, and per-user content. Only acceptable for public read-only dashboards. See §14 for the four trade-offs in detail.</div>
       </div>
 
       <div class="decision-node">
