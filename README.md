@@ -70,13 +70,16 @@ Pick a **token type** in the claims panel — it selects the mint endpoint and t
 - **custom** → `auth/token/custom` (ABAC via RLS — the forward track):
   - **`variable_values[]`** — `{ name, values }` where `name` is a formula variable referenced in an
     RLS rule via `ts_var(name)`. The modern replacement for `user_parameters`.
-  - **`persist_option`** — *required* on this endpoint. Defaults to `REPLACE` (each mint is
-    authoritative). The API default is `APPEND`, which silently **accumulates** entitlements across
-    mints — `NONE`/`RESET` are rejected when `variable_values` are present.
+  - **`persist_option`** — a **required** field on this endpoint (enum `REPLACE`/`APPEND`/`NONE`/`RESET`,
+    no server default — omit it and the mint returns `400`). The playground sends `REPLACE`, so each
+    mint is authoritative and entitlements can't **accumulate** across mints (the risk `APPEND` invites).
+    `NONE`/`RESET` are rejected when `variable_values` are present.
   - **`objects[]`** — optional `LOGICAL_TABLE` identifiers to scope the values to specific models.
 
-> A ThoughtSpot cluster runs **one** token workflow at a time (`full` *or* `custom`), not both in
-> parallel — the picker mirrors that choice per mint so you can test either.
+> Most deployments standardize on **one** mint endpoint (`full` *or* `custom`) for consistency and
+> simpler auditing — the picker lets you switch per mint so you can test either. (A hard cluster-wide
+> "only one workflow active at a time" restriction couldn't be confirmed against the current API
+> reference, so treat a mixed design as unusual rather than impossible.)
 
 > **Runtime filters are not a security boundary.** They become editable URL params; the inspector and
 > generated code flag this. For tenant isolation or per-user data, enforce it server-side with RLS/ABAC
