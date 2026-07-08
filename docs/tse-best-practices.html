@@ -1135,11 +1135,11 @@
       ABAC via RLS variables · 10.15.0.cl+<br>
       filter_rules · legacy, still supported<br>
       Default token TTL · 300s (5 min)<br>
-      Default <code style="font-size:10.5px;">persist_option</code> · APPEND<br>
+      <code style="font-size:10.5px;">persist_option</code> · required · no default<br>
       <code style="font-size:10.5px;">auth/token/full</code> · plain trusted auth<br>
       <code style="font-size:10.5px;">auth/token/custom</code> · the ABAC mint<br>
       EmbeddedSSO · SDK 1.15 / 8.8.0.cl+<br>
-      Cookieless · SDK 1.22 / 9.3.0.cl+
+      Cookieless · SDK 1.22 / 9.3.0.cl (9.5.1.sw)+
     </p>
   </aside>
 
@@ -1855,7 +1855,7 @@
         <div class="info-icon">i</div>
         <div>
           <div class="info-title">Token TTL and the auto-refresh that makes short TTLs painless</div>
-          <div class="info-text">The default <code>validity_time_in_sec</code> is 300s (5 min). With <code>autoLogin: true</code> in the SDK <code>init()</code>, the SDK requests a fresh token before the current one expires — re-running steps 5 through 10 — so the user never sees a signed-out embed. That auto-refresh is what lets you run short TTLs without UX cost, and it's how entitlement changes propagate: change a user's region in your entitlements service, the next refresh picks it up. For tenant switches, force a refresh immediately rather than waiting for TTL. Note one nuance: ThoughtSpot's own guidance recommends a <em>longer</em> validity for cookieless (often 20–30 min), since the token is used as a bearer on every request; the tight-TTL stance in §07 is a deliberately stricter security posture, not the documented default. Cookie-based auth is the opposite — you can drop it under a minute, since the token is used once to establish a session.</div>
+          <div class="info-text">The default <code>validity_time_in_sec</code> is 300s (5 min). With <code>autoLogin: true</code> in the SDK <code>init()</code>, the SDK requests a fresh token before the current one expires — re-running steps 5 through 10 — so the user never sees a signed-out embed. That auto-refresh is what lets you run short TTLs without UX cost, and it's how entitlement changes propagate: change a user's region in your entitlements service, the next refresh picks it up. Scope note: on <code>auth/token/custom</code> only <code>variable_values</code> re-apply on each mint — group/role membership, <code>display_name</code>, and <code>email</code> are honored at user <em>creation</em> only and are <strong>not</strong> updated for existing users on later mints (manage those via the user/group APIs or IdP sync; <code>auth/token/full</code> does update groups). For tenant switches, force a refresh immediately rather than waiting for TTL. Note one nuance: ThoughtSpot's own guidance recommends a <em>longer</em> validity for cookieless (often 20–30 min), since the token is used as a bearer on every request; the tight-TTL stance in §07 is a deliberately stricter security posture, not the documented default. Cookie-based auth is the opposite — you can drop it under a minute, since the token is used once to establish a session.</div>
         </div>
       </div>
     </section>
@@ -1918,7 +1918,7 @@
         <div class="info-icon">i</div>
         <div>
           <div class="info-title">Which endpoint: <code>auth/token/full</code> vs <code>auth/token/custom</code></div>
-          <div class="info-text">There are two v2 mint endpoints, and the choice matters. <code>/api/rest/2.0/auth/token/full</code> grants a full-access token and is what the <strong>majority of trusted-auth implementations use</strong> when they don't need token-stamped entitlements. <code>/api/rest/2.0/auth/token/custom</code> is the <strong>ABAC endpoint</strong> — it's the one that accepts <code>variable_values</code> (or legacy <code>filter_rules</code> / <code>parameter_values</code>) and is required for the per-session ABAC this document recommends. There's also <code>auth/token/object</code> for read-only access to a single object. One hard constraint: ThoughtSpot allows only <strong>one</strong> token-request workflow active at a time — either <code>full</code> or <code>custom</code>, not both in parallel — so a "full for some users, custom for others" design won't work. The code below uses <code>custom</code> because it stamps <code>variable_values</code>.</div>
+          <div class="info-text">There are two v2 mint endpoints, and the choice matters. <code>/api/rest/2.0/auth/token/full</code> grants a full-access token and is what the <strong>majority of trusted-auth implementations use</strong> when they don't need token-stamped entitlements. <code>/api/rest/2.0/auth/token/custom</code> is the <strong>ABAC endpoint</strong> — it's the one that accepts <code>variable_values</code> (or legacy <code>filter_rules</code> / <code>parameter_values</code>) and is required for the per-session ABAC this document recommends. There's also <code>auth/token/object</code> for read-only access to a single object. Most deployments standardize on <strong>one</strong> of these for consistency and simpler auditing — choose <code>custom</code> if any embedded users need token-stamped ABAC. (These are independent endpoints; a documented cluster-wide "only one active at a time" restriction couldn't be confirmed against the current API reference, so treat a mixed design as unusual rather than impossible, and verify with ThoughtSpot Support if you need it.) The code below uses <code>custom</code> because it stamps <code>variable_values</code>.</div>
         </div>
       </div>
 
@@ -1954,7 +1954,7 @@
       { identifier: <span class="s">`role_</span><span class="v">${abac.role}</span><span class="s">`</span> }
     ],
     validity_time_in_sec: <span class="n">300</span>,                <span class="c">// see §06 on TTL choice</span>
-    persist_option: <span class="s">'REPLACE'</span>,                 <span class="c">// MUST set explicitly — API default is APPEND</span>
+    persist_option: <span class="s">'REPLACE'</span>,                 <span class="c">// REQUIRED field (no default) — REPLACE = authoritative per mint</span>
     variable_values: [
       { name: <span class="s">'region_var'</span>, values: [abac.region] },
       { name: <span class="s">'tenant_id_var'</span>, values: [user.tenant_id] },
@@ -2474,21 +2474,21 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
       <div class="info-box warn">
         <div class="info-icon">!</div>
         <div>
-          <div class="info-title">The default is APPEND, not REPLACE — set it explicitly</div>
-          <div class="info-text">The default <code>persist_option</code> on <code>auth/token/custom</code> is <code>APPEND</code>. A stateless token service that omits the field will <strong>accumulate</strong> entitlements across mints rather than overwrite them, which is the slow-leak failure this whole pattern is meant to prevent. For a stateless service, always send <code>REPLACE</code>.</div>
+          <div class="info-title">persist_option is required — send REPLACE for a stateless mint</div>
+          <div class="info-text"><code>persist_option</code> is a <strong>required</strong> field on <code>auth/token/custom</code> (enum <code>REPLACE</code>/<code>APPEND</code>/<code>NONE</code>/<code>RESET</code>, no server default) — omit it and the mint returns <code>400</code>, it does not silently default. You must choose, and for a stateless per-session token service the authoritative choice is <code>REPLACE</code>: each mint fully replaces the user's persisted set, so entitlements can't slowly accumulate across mints (the failure <code>APPEND</code> invites).</div>
         </div>
       </div>
       <table class="data">
         <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
         <tbody>
-          <tr class="recommended"><td>REPLACE</td><td>Replaces the user's persisted set with what's in this request. Omitting a value from the payload removes it. <strong>The right choice for a stateless token service</strong> — but you must set it, because it is not the default.</td></tr>
-          <tr><td>APPEND</td><td><strong>The API default.</strong> Adds the values in this request to whatever the user already has persisted. Useful for deliberate incremental grants; dangerous when used by accident in a per-session mint.</td></tr>
-          <tr><td>NONE</td><td>Mint the token but do <strong>not</strong> persist its entitlements to the user object. Correct for pure cookieless where you re-mint every session and do not want scheduled reports running with stale persisted values.</td></tr>
-          <tr><td>RESET</td><td>Clears <strong>all</strong> persisted entitlements on the user object. This is the documented way to wipe a user's stored ABAC (for example, on offboarding or a tenant change). Current and supported — not legacy.</td></tr>
+          <tr class="recommended"><td>REPLACE</td><td>Replaces the user's persisted set with what's in this request. Omitting a value from the payload removes it. <strong>The right choice for a stateless token service that stamps <code>variable_values</code></strong> — and one of only two options valid alongside <code>variable_values</code>.</td></tr>
+          <tr><td>APPEND</td><td>Adds the values in this request to whatever the user already has persisted. Also valid with <code>variable_values</code>. Useful for deliberate incremental grants; dangerous when used by accident in a per-session mint.</td></tr>
+          <tr><td>NONE</td><td>Mint the token but do <strong>not</strong> persist entitlements to the user object. <strong>Rejected (400) when <code>variable_values</code> is present</strong> — usable only on a mint that carries no <code>variable_values</code>.</td></tr>
+          <tr><td>RESET</td><td>Clears persisted <em>legacy</em> <code>filter_rules</code>/<code>parameter_values</code> on the user object (offboarding, tenant change). <strong>Also rejected (400) when <code>variable_values</code> is present</strong>, and it does <strong>not</strong> clear persisted <code>variable_values</code> — for the variable-based path it is treated as a legacy value.</td></tr>
         </tbody>
       </table>
 
-      <p class="dim">Persisted values are used for scheduled exports, alerts, and cookie-based sessions — anything that runs when no fresh token is provided. So persistence is about what happens <em>between</em> tokens. For pure cookieless with re-mint on every session you may want <code>NONE</code>; if you persist, use <code>REPLACE</code> so each mint is authoritative. If tenant context changes mid-session, re-mint with <code>REPLACE</code> (or <code>RESET</code> then re-mint).</p>
+      <p class="dim">Persisted values are used for scheduled exports, alerts, and cookie-based sessions — anything that runs when no fresh token is provided. So persistence is about what happens <em>between</em> tokens. Note the API constraint: when a mint carries <code>variable_values</code>, only <code>REPLACE</code> or <code>APPEND</code> are allowed (<code>NONE</code>/<code>RESET</code> return <code>400</code>) — there is no "stamp variables but persist nothing" option, so use <code>REPLACE</code> so each mint is authoritative. To wipe a user's stored ABAC on a tenant change, send a separate <code>variable_values</code>-free request with <code>RESET</code> first, then re-mint with <code>REPLACE</code>.</p>
 
       <h3>How values become a WHERE clause</h3>
       <p>The translation rule for a single-variable RLS:</p>
@@ -2504,13 +2504,13 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
         </tbody>
       </table>
 
-      <h3>Fail-closed by design: <code>is_mandatory_token_filter</code> and <code>TS_WILDCARD_ALL</code></h3>
-      <p>The "no rows visible when the variable is unset" behavior in the table above is not automatic across the board — it's something you opt into per column, and a security compendium should call out the actual mechanism. On any column in a Model, set <code>is_mandatory_token_filter: true</code> in the TML. ThoughtSpot then refuses to return data for that column unless the token (or the resolved RLS) supplies a value for it. A user with no entitlement on a mandatory-filter column sees nothing, rather than everything. That is what turns "the RLS rule happened to fail closed" into "I architected deny-by-default."</p>
+      <h3>Fail-closed by design: <code>TS_WILDCARD_ALL</code> and <code>TS_WILDCARD_NONE</code></h3>
+      <p>In the formula-variable model, deny-by-default is <strong>automatic</strong> — you don't opt into it. Every variable referenced in an RLS rule is required: if a variable is unassigned (or set to <code>TS_WILDCARD_NONE</code>), query generation fails for that rule and the user sees <em>no rows</em> — exactly the "<code>[]</code> or unset → no rows visible" case in the translation table above. A user with no entitlement on a variable-secured column sees nothing, rather than everything, without any extra per-column flag. <em>(The related <code>is_mandatory_token_filter: true</code> TML flag is the deny-by-default mechanism for the <strong>legacy <code>filter_rules</code></strong> pattern — it blocks a column when no matching <code>filter_rule</code> is supplied, see §11 — and is not needed for the variable-based path.)</em></p>
 
-      <p>The escape hatch is the reserved wildcard. To deliberately grant a user all values on a protected column — an admin, a support role, an internal superuser — pass the keyword <code>["TS_WILDCARD_ALL"]</code> as the value, either as the variable value in the token or in the RLS rule itself. This is the clean, auditable way to express "this principal sees everything," instead of leaving the column unprotected or maintaining a parallel set of bypass rules.</p>
+      <p>Two reserved wildcards make intent explicit and auditable. To deliberately grant a principal <em>all</em> values on a protected column — an admin, a support role, an internal superuser — pass <code>["TS_WILDCARD_ALL"]</code> as the variable's value (in the token or the RLS rule). To force a hard deny, pass <code>["TS_WILDCARD_NONE"]</code>. This beats leaving a column unprotected or maintaining a parallel set of bypass rules.</p>
 
       <div class="code-block">
-        <div class="code-head"><span>mandatory token filter · Model TML</span><span class="annot">deny-by-default on a secured column</span></div>
+        <div class="code-head"><span>mandatory token filter · Model TML</span><span class="annot">legacy filter_rules deny-by-default (not needed for variables)</span></div>
 <pre><span class="c"># in the column definition of your Model TML</span>
   - <span class="k">name</span>: <span class="s">Region</span>
     <span class="k">is_mandatory_token_filter</span>: <span class="k">true</span>    <span class="c"># no value supplied → no data</span></pre>
@@ -2530,13 +2530,13 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
       <div class="info-box info">
         <div class="info-icon">i</div>
         <div>
-          <div class="info-title">Why this pairing matters</div>
-          <div class="info-text">Without <code>is_mandatory_token_filter</code>, a column is open by default and your security depends on every RLS rule being present and correct — one missing rule leaks the column. With it, the column is closed by default and you explicitly open it, per principal, via the variable value or <code>TS_WILDCARD_ALL</code>. Deny-by-default is the posture you want on anything sensitive; this is how you get it.</div>
+          <div class="info-title">Why deny-by-default matters</div>
+          <div class="info-text">With formula variables, a variable-secured column is closed by default: any RLS rule referencing an unassigned variable returns no rows, so you open access explicitly, per principal, via the variable value (or <code>TS_WILDCARD_ALL</code>). In the legacy <code>filter_rules</code> pattern the equivalent guarantee is opt-in per column via <code>is_mandatory_token_filter</code> (without it, a column with no matching filter rule is open). Either way, deny-by-default is the posture you want on anything sensitive.</div>
         </div>
       </div>
 
       <h3>Audit anytime</h3>
-      <p class="dim">Pull current variable assignments per user — useful when someone reports "this user is seeing rows they shouldn't." Set <code>response_content</code> to <code>METADATA_AND_VALUES</code> (the default is <code>METADATA_ONLY</code>, which returns no values).</p>
+      <p class="dim">Pull current variable assignments per user — useful when someone reports "this user is seeing rows they shouldn't." Set <code>response_content</code> to <code>METADATA_AND_VALUES</code> (the default is <code>METADATA</code>, which returns no values).</p>
       <div class="code-block">
         <div class="code-head"><span>POST /api/rest/2.0/template/variables/search</span></div>
 <pre>{
@@ -2571,7 +2571,7 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
 
       <div class="two-col">
         <div class="col-card legacy">
-          <div class="col-tag">⊘ LEGACY (deprecated)</div>
+          <div class="col-tag">⊘ LEGACY (supported)</div>
           <h4>filter_rules + parameter_values</h4>
           <p class="dim" style="font-size:12px;">10.4.0.cl onwards · column-name binding</p>
           <div class="code-block">
@@ -2601,7 +2601,7 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
         <div class="col-card current">
           <div class="col-tag">✓ CURRENT (recommended)</div>
           <h4>variable_values</h4>
-          <p class="dim" style="font-size:12px;">10.15.0.cl onwards · variable-name binding</p>
+          <p class="dim" style="font-size:12px;">field 10.14.0.cl+ · formula variables 10.15.0.cl+ · variable-name binding</p>
           <div class="code-block">
             <div class="code-head"><span>POST /auth/token/custom</span></div>
 <pre>{
@@ -2660,8 +2660,8 @@ region = <span class="v">ts_var</span>(<span class="hl">region_var</span>) <span
       <div class="info-box warn">
         <div class="info-icon">!</div>
         <div>
-          <div class="info-title">One token workflow at a time</div>
-          <div class="info-text">A cluster runs <strong>one</strong> JWT token-request workflow at a time: either <code>auth/token/full</code> or <code>auth/token/custom</code>. You can't have some users mint via <code>full</code> and others via <code>custom</code> in parallel. Plan the switch to <code>custom</code> as a single cutover for the whole instance, and after validating, stop using <code>full</code>/<code>object</code> for ABAC token generation.</div>
+          <div class="info-title">Standardize on one mint endpoint</div>
+          <div class="info-text">Standardize on <strong>one</strong> mint endpoint per deployment for consistency and simpler auditing: use <code>auth/token/custom</code> everywhere once any users need token-stamped ABAC, rather than mixing <code>full</code> for some users and <code>custom</code> for others. (A hard cluster-wide "only one workflow active at a time" restriction couldn't be confirmed against the current API reference — the two are independent endpoints — so treat this as an operational recommendation, and confirm with ThoughtSpot Support if your design depends on running both.) After cutover, stop using <code>full</code>/<code>object</code> for ABAC token generation.</div>
         </div>
       </div>
 
@@ -2987,7 +2987,7 @@ region <span class="k">in</span> (
         <div class="info-icon">L2</div>
         <div>
           <div class="info-title">ABAC filter rules</div>
-          <div class="info-text">Set via the token mint request (<code>variable_values</code>, or legacy <code>filter_rules</code>). Stamped onto the signed JWT, locked in for the session. Multiple clauses combine with <strong>AND</strong>. Cannot be overridden by anything downstream — including runtime filters set in the browser. Covered in §10–§11.</div>
+          <div class="info-text">Set via the token mint request (<code>variable_values</code>, or legacy <code>filter_rules</code>) and persisted server-side on the user record at mint time; the signed token is the tamper-proof bearer that carries the session. Multiple clauses combine with <strong>AND</strong>. Cannot be overridden by anything downstream — including runtime filters set in the browser. Covered in §10–§11.</div>
         </div>
       </div>
 
@@ -3020,7 +3020,7 @@ region <span class="k">in</span> (
 });</pre>
       </div>
 
-      <p>Under the hood, these become URL query parameters (<code>?col1=Region&amp;op1=EQ&amp;val1=NA</code>). Operators include <code>EQ</code>, <code>NE</code>, <code>IN</code>, <code>NOT_IN</code>, <code>LT</code>, <code>LE</code>, <code>GT</code>, <code>GE</code>, <code>CONTAINS</code>, <code>BEGINS_WITH</code>, <code>ENDS_WITH</code>, <code>BW</code>, <code>BW_INC</code>. They can be updated after render via <code>HostEvent.UpdateRuntimeFilters</code>.</p>
+      <p>Under the hood, these become URL query parameters (<code>?col1=Region&amp;op1=EQ&amp;val1=NA</code>). Operators include <code>EQ</code>, <code>NE</code>, <code>IN</code>, <code>NOT_IN</code>, <code>LT</code>, <code>LE</code>, <code>GT</code>, <code>GE</code>, <code>CONTAINS</code>, <code>BEGINS_WITH</code>, <code>ENDS_WITH</code>, <code>BW</code>, <code>BW_INC</code>, <code>BW_INC_MIN</code>, <code>BW_INC_MAX</code>. They can be updated after render via <code>HostEvent.UpdateRuntimeFilters</code>.</p>
 
       <p><strong>Runtime Parameters</strong> are similar but for Parameters (TS objects that feed into formulas). They override the default value for the embed instance:</p>
 
@@ -3063,6 +3063,7 @@ region <span class="k">in</span> (
           <tr><td><code>HostEvent.UpdateFilters</code></td><td>host → embed</td><td>Set filter values directly. Filter must already exist on the Liveboard.</td></tr>
           <tr><td><code>HostEvent.GetFilters</code></td><td>host → embed (await)</td><td>Read the currently applied filters. Returns a Promise.</td></tr>
           <tr><td><code>HostEvent.GetParameters</code></td><td>host → embed (await)</td><td>Same as GetFilters but for Parameter values.</td></tr>
+          <tr><td><code>HostEvent.UpdateParameters</code></td><td>host → embed</td><td>Update Parameter values live after render — the write path for what-if scenarios (SDK 1.29 / 10.1.0.cl+).</td></tr>
           <tr><td><code>EmbedEvent.FilterChanged</code></td><td>embed → host</td><td>Fires when the user changes a filter via the UI.</td></tr>
           <tr><td><code>EmbedEvent.ParameterChanged</code></td><td>embed → host</td><td>Fires when the user changes a Parameter via the UI.</td></tr>
         </tbody>
@@ -3566,7 +3567,7 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
       <p>By default, a user provisioned through your embed could navigate to the ThoughtSpot instance URL directly and land in the full standalone application — a UI surface you didn't design, with navigation you don't control. Two switches close this off:</p>
       <ul>
         <li><strong>Block non-embed full app access</strong> — the admin toggle under <em>Develop &gt; Customizations &gt; Security settings</em> (available at cluster and per-Org level). Note it does <strong>not</strong> restrict users with administrator or developer privileges.</li>
-        <li><strong><code>blockNonEmbedFullAppAccess</code></strong> in the SDK's <code>init()</code> (SDK 1.22 / 9.3.0.cl+, default <code>true</code>) — prevents embed users from reaching TS pages outside the iframe.</li>
+        <li><strong><code>blockNonEmbedFullAppAccess</code></strong> in the SDK's <code>init()</code> (SDK 1.22 / 9.3.0.cl+) — prevents embed users from reaching TS pages outside the iframe. It defaults to <code>true</code> only on releases <strong>≤ 10.5.0.cl</strong>; from 10.6.0.cl+ it is superseded by <strong>Selective User Access</strong> (Security settings) and the SDK property is being deprecated, so make the Security-settings control your primary mechanism on current clusters.</li>
       </ul>
 
       <h3>3 · Action surface — <code>visibleActions</code>, <code>hiddenActions</code>, <code>disabledActions</code></h3>
@@ -3604,7 +3605,7 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
         <tbody>
           <tr><td>CSP visual embed hosts</td><td>Security settings (All Orgs) or API</td><td>Exact production domains only · no leftover dev hosts</td></tr>
           <tr><td>CORS whitelisted domains</td><td>Security settings (cluster or per-Org)</td><td>Same domains as CSP · per-Org where tenants differ</td></tr>
-          <tr><td>Block non-embed full app access</td><td>Admin toggle + <code>blockNonEmbedFullAppAccess</code></td><td>On for customer-facing embeds · remember it exempts admin/developer users</td></tr>
+          <tr><td>Block non-embed full app access</td><td>Selective User Access (10.6.0.cl+) / admin toggle + legacy <code>blockNonEmbedFullAppAccess</code></td><td>On for customer-facing embeds · remember it exempts admin/developer users</td></tr>
           <tr><td>Action surface</td><td><code>visibleActions</code> / <code>hiddenActions</code> / <code>disabledActions</code></td><td>Allowlist with <code>visibleActions</code> · enforce via privileges, mirror in UI</td></tr>
           <tr><td>Export / download rights</td><td>Privileges on role groups</td><td>Grant per role group (§15 C3.b), never cluster-wide by default</td></tr>
           <tr><td>Token handling</td><td>Frontend + token service</td><td>Memory only · never logged · logout invalidates · HTTPS only</td></tr>
@@ -3787,9 +3788,9 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
       <table class="data">
         <thead><tr><th>Component</th><th>Embeds</th><th>Key config</th><th>Use when the user should…</th></tr></thead>
         <tbody>
-          <tr><td>LiveboardEmbed</td><td>A full Liveboard, or a single visualization from one</td><td><code>liveboardId</code> (+ <code>vizId</code> for one viz), <code>liveboardV2: true</code></td><td>Consume curated dashboards — the workhorse of embedded analytics</td></tr>
-          <tr><td>SearchEmbed</td><td>The search experience — or a <strong>saved Answer</strong></td><td><code>dataSources: [modelId]</code> · or <code>answerId</code></td><td>Explore ad-hoc, build their own Answers</td></tr>
-          <tr><td>SearchBarEmbed</td><td>Just the search bar</td><td><code>dataSources: [modelId]</code></td><td>Type questions in your UI while you render results your way</td></tr>
+          <tr><td>LiveboardEmbed</td><td>A full Liveboard, or a single visualization from one</td><td><code>liveboardId</code> (+ <code>vizId</code> for one viz)</td><td>Consume curated dashboards — the workhorse of embedded analytics</td></tr>
+          <tr><td>SearchEmbed</td><td>The search experience — or a <strong>saved Answer</strong></td><td><code>dataSource: modelId</code> · or <code>answerId</code></td><td>Explore ad-hoc, build their own Answers</td></tr>
+          <tr><td>SearchBarEmbed</td><td>Just the search bar</td><td><code>dataSource: modelId</code></td><td>Type questions in your UI while you render results your way</td></tr>
           <tr><td>SpotterEmbed</td><td>Conversational analytics (Spotter)</td><td><code>worksheetId</code></td><td>Ask questions in natural language, multi-turn</td></tr>
           <tr><td>AppEmbed</td><td>The full ThoughtSpot application</td><td><code>pageId</code>, nav controls</td><td>Get the whole product inside a portal shell</td></tr>
         </tbody>
@@ -3869,8 +3870,8 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
 
 <span class="v">init</span>({ thoughtSpotHost, authType: <span class="v">AuthType</span>.<span class="v">TrustedAuthTokenCookieless</span>, getAuthToken, autoLogin: <span class="k">true</span> });
 
-<span class="c">// a Liveboard</span>
-<span class="k">new</span> <span class="v">LiveboardEmbed</span>(<span class="s">"#embed"</span>, { liveboardId, liveboardV2: <span class="k">true</span> });
+<span class="c">// a Liveboard  (liveboardV2 is now the only experience — the flag is a no-op since 10.1.0.cl)</span>
+<span class="k">new</span> <span class="v">LiveboardEmbed</span>(<span class="s">"#embed"</span>, { liveboardId });
 
 <span class="c">// one visualization from a Liveboard</span>
 <span class="k">new</span> <span class="v">LiveboardEmbed</span>(<span class="s">"#embed"</span>, { liveboardId, vizId });
@@ -3951,13 +3952,13 @@ embed.<span class="v">on</span>(<span class="v">EmbedEvent</span>.<span class="v
       <div class="info-box warn">
         <div class="info-icon">!</div>
         <div>
-          <div class="info-title">Field lesson: UpdateRuntimeFilters has replace semantics — merge before you fire</div>
-          <div class="info-text">Each <code>UpdateRuntimeFilters</code> call replaces the embed's full runtime-filter set. If two parts of your app each fire the event with only their own filters (a filter bar and a separate "runtime filters" panel, say), they will silently clobber each other — the last caller wins and the other's filters vanish. Keep one merged source of truth for runtime-filter state and have every caller send the union.</div>
+          <div class="info-title">Field lesson: keep one merged source of truth for runtime filters</div>
+          <div class="info-text">Per the SDK reference, <code>UpdateRuntimeFilters</code> <strong>appends</strong> the attributes you pass to the Liveboard's existing runtime-filter set — so you can't clear or narrow a previously-set filter just by sending a reduced set (a stale filter persists until you overwrite that column with an empty <code>values: []</code> array, or re-render the embed). Independent callers that each fire only their own filters therefore drift out of sync — one accumulates, the other can't remove. Keep one merged source of truth for runtime-filter state, have every caller send the full union, and clear removed columns explicitly. <em>(This behavior has shifted across SDK versions and experiences — confirm append vs replace against your cluster's SDK before relying on it.)</em></div>
         </div>
       </div>
 
       <h3>Pattern 2 · Drill-down with filter carry-over</h3>
-      <p>"Click a row in the overview board, land on a detail board scoped to that row" is a destroy-and-re-render pattern: a custom action (or context-menu action) captures the clicked attributes, your handler merges them with the parent board's active filters, and re-renders a <code>LiveboardEmbed</code> pointed at the detail board with the merged set as <code>runtimeFilters</code>. Show your own Back affordance that re-renders the parent. Two details make it feel native: merge the <em>parent's</em> current filters in (so the drill respects what the user had narrowed to), and clear the drill state on any normal navigation.</p>
+      <p>"Click a row in the overview board, land on a detail board scoped to that row" is a destroy-and-re-render pattern: a custom action (or the built-in <code>EmbedEvent.VizPointClick</code> / <code>VizPointRightClick</code> events) captures the clicked attributes, your handler merges them with the parent board's active filters, and re-renders a <code>LiveboardEmbed</code> pointed at the detail board with the merged set as <code>runtimeFilters</code>. Show your own Back affordance that re-renders the parent. Two details make it feel native: merge the <em>parent's</em> current filters in (so the drill respects what the user had narrowed to), and clear the drill state on any normal navigation.</p>
 
       <h3>Pattern 3 · Capture saves client-side</h3>
       <p>If users can save or edit content in the embed and your app needs to know (refresh a content list, tag the new object, log it), listen for <code>EmbedEvent.Save</code> and react in the handler. Don't poll the metadata API waiting for new objects to appear.</p>
