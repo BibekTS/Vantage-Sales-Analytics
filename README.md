@@ -117,7 +117,6 @@ link asks for an explicit **Connect** click before the app touches it.
 | Rail item | SDK class | Needs |
 |---|---|---|
 | Search Data | `SearchEmbed` | Worksheet/Model |
-| NL Search Bar | `SearchBarEmbed` | Worksheet/Model |
 | Spotter AI | `SpotterEmbed` | Worksheet/Model |
 | Liveboard | `LiveboardEmbed` | Liveboard |
 | Custom Liveboard | `LiveboardEmbed` + website-native filter bar | Liveboard |

@@ -11,7 +11,6 @@ import {
   AuthType,
   AuthStatus,
   SearchEmbed,
-  SearchBarEmbed,
   SpotterEmbed,
   LiveboardEmbed,
   AppEmbed,
@@ -219,16 +218,6 @@ export function doRender(section, config, callbacks, options = {}) {
           },
         }),
         ...(rtParams && { runtimeParameters: rtParams }),
-        ...flags,
-      });
-      break;
-
-    case 'nlsearch':
-      embed = new SearchBarEmbed('#ts-embed-container', {
-        frameParams: {},
-        dataSources: [config.worksheetId],
-        hiddenActions,
-        disabledActions,
         ...flags,
       });
       break;

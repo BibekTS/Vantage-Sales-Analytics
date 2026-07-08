@@ -17,7 +17,6 @@ import { fetchAllRows, groupStatements, downloadStatementsPdf } from './invoice-
 // ── Embed catalogue ──────────────────────────────────────────────────────────
 const EMBEDS = [
   { id: 'search',           name: 'Search Data',       cls: 'SearchEmbed',    needs: 'worksheet' },
-  { id: 'nlsearch',         name: 'NL Search Bar',     cls: 'SearchBarEmbed', needs: 'worksheet' },
   { id: 'spotter',          name: 'Spotter AI',        cls: 'SpotterEmbed',   needs: 'worksheet' },
   { id: 'liveboard',        name: 'Liveboard',         cls: 'LiveboardEmbed', needs: 'liveboard' },
   { id: 'liveboard-custom', name: 'Custom Liveboard',  cls: 'LiveboardEmbed', needs: 'liveboard' },
@@ -31,7 +30,7 @@ const META = Object.fromEntries(EMBEDS.map(e => [e.id, e]));
 // Rail grouping — mirrors how the SDK families the surfaces: the three search-driven
 // embeds, the four LiveboardEmbed flavours, and the two whole-app / no-iframe options.
 const RAIL_GROUPS = [
-  { label: 'Search & AI',  ids: ['search', 'nlsearch', 'spotter'] },
+  { label: 'Search & AI',  ids: ['search', 'spotter'] },
   { label: 'Liveboards',   ids: ['liveboard', 'liveboard-custom', 'ai-highlights', 'viz'] },
   { label: 'App & REST',   ids: ['fullapp', 'ai-insights'] },
 ];
@@ -39,7 +38,6 @@ const RAIL_GROUPS = [
 // Plain-English "what does this do" blurbs shown on hover over each rail item.
 const EMBED_BLURBS = {
   search:           'Full search experience — build a query against a Worksheet/Model and get an auto-charted answer.',
-  nlsearch:         'Just the natural-language search bar — users type a question and results open in ThoughtSpot.',
   spotter:          'Conversational AI analyst — ask a question, then keep asking follow-ups in a chat-style session.',
   liveboard:        'Embed a full interactive Liveboard (dashboard) with all its tiles, filters, and tabs.',
   'liveboard-custom':'A Liveboard driven by your own website-native filter bar, from outside the iframe.',
@@ -63,7 +61,6 @@ const LB_DOWNLOAD_ACTIONS = ['DownloadLiveboard', 'DownloadLiveboardAsContinuous
 const VIZ_DOWNLOAD_ACTIONS = ['Download', 'DownloadAsPdf', 'DownloadAsCsv', 'DownloadAsXlsx'];
 const ACTIONS = {
   search:   [...VIZ_DOWNLOAD_ACTIONS, 'Edit', 'Share', 'Pin', 'DrillDown', 'SpotIQAnalyze'],
-  nlsearch: ['Edit', 'Share'],
   spotter:  ['Share', 'Pin', 'SpotIQAnalyze'],
   liveboard: [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
     'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
@@ -99,11 +96,6 @@ const DISPLAY = {
     ['focusSearchBarOnRender', 'Auto-focus search bar', true],
     ['hideResults', 'Hide results', false],
     ['forceTable', 'Force table view', false],
-  ],
-  nlsearch: [
-    ['hideWorksheetSelector', 'Hide data source', false],
-    ['disableWorksheetChange', 'Lock data source', false],
-    ['hideSampleQuestions', 'Hide sample questions', false],
   ],
   spotter: [
     ['disableSourceSelection', 'Disable source switch', false],
@@ -155,11 +147,8 @@ const HINTS = {
   focusSearchBarOnRender: 'Put the cursor in the search bar as soon as the embed loads.',
   hideResults: 'Hide the results chart/table, leaving only the search bar.',
   forceTable: 'Always render results as a table instead of the auto-picked chart.',
-  // nlsearch
-  hideWorksheetSelector: 'Hide the data source picker so users can’t see which source is used.',
-  disableWorksheetChange: 'Lock the data source — visible but users can’t switch it.',
-  hideSampleQuestions: 'Hide the suggested/sample questions shown before searching.',
   // spotter
+  hideSampleQuestions: 'Hide the suggested/sample questions shown before searching.',
   disableSourceSelection: 'Lock the Spotter data source — visible but not switchable.',
   hideSourceSelection: 'Hide the Spotter data source selector entirely.',
   updatedSpotterChatPrompt: 'Turn on the new Spotter 3 chat interface (updatedSpotterChatPrompt). Off by default — the cluster must have the Spotter 3 experience enabled for this to take effect. Needs SDK 1.45.0+ / cluster 26.2.0.cl+.',
@@ -995,7 +984,7 @@ function sectionObject(s) {
 
   if (needs === 'worksheet') {
     c.appendChild(labeledSelect('Worksheet / Model', s.worksheetId, discovered.worksheets,
-      v => { setState({ worksheetId: v }); renderInspector(); render(); }, 'Used by Search, NL Search, Spotter', !connected));
+      v => { setState({ worksheetId: v }); renderInspector(); render(); }, 'Used by Search, Spotter', !connected));
     if (s.section === 'search') {
       c.appendChild(textField('Pre-fill search query', s.searchTokenString, v => { setState({ searchTokenString: v }); render(); }, '[Sales Amount] [Region]'));
       c.appendChild(toggleField('Auto-execute search', s.executeSearch, v => { setState({ executeSearch: v }); render(); }));
@@ -3362,7 +3351,6 @@ function generateCode() {
   const opt = [];
   opt.push('  frameParams: {},');
   if (s.section === 'search') { opt.push(`  dataSources: ['${esc(s.worksheetId)}'],`); if (s.searchTokenString) opt.push(`  searchOptions: { searchTokenString: '${esc(s.searchTokenString)}', executeSearch: ${s.executeSearch} },`); }
-  if (s.section === 'nlsearch') opt.push(`  dataSources: ['${esc(s.worksheetId)}'],`);
   if (s.section === 'spotter') opt.push(`  worksheetId: '${esc(s.worksheetId)}',`);
   // Masterpieces is on by default; the flags loop below emits the explicit `false` when it's toggled off.
   const masterpiecesOn = (s.flags[s.section] || {}).isLiveboardMasterpiecesEnabled !== false;
