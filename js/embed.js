@@ -200,6 +200,14 @@ export function doRender(section, config, callbacks, options = {}) {
   const validParams = runtimeParameters.filter(p => p.name && String(p.name).trim() !== '');
   const rtParams = validParams.length ? validParams : undefined;
 
+  // fullHeight grows the embed to its full content height (no internal scrollbar — the host
+  // scrolls). Pair it with lazyLoadFullHeight so tiles load as they scroll into view (not all at
+  // once) and a minimumHeight floor so short/empty boards still fill the stage. Only applied to
+  // LiveboardEmbed / AppEmbed, the two embed types that support fullHeight.
+  const fhExtra = flags.fullHeight
+    ? { lazyLoadFullHeight: true, minimumHeight: flags.minimumHeight || 600 }
+    : {};
+
   let embed;
   let aiHighlightsFired = false; // 'ai-highlights' nav option fires HostEvent.AIHighlights once per render
 
@@ -228,6 +236,7 @@ export function doRender(section, config, callbacks, options = {}) {
         worksheetId: config.worksheetId,
         hiddenActions,
         disabledActions,
+        ...(rtParams && { runtimeParameters: rtParams }),
         ...flags,
       });
       break;
@@ -244,6 +253,7 @@ export function doRender(section, config, callbacks, options = {}) {
         disabledActions,
         customActions,
         ...(rtParams && { runtimeParameters: rtParams }),
+        ...fhExtra,
         ...flags,
       });
       break;
@@ -275,6 +285,7 @@ export function doRender(section, config, callbacks, options = {}) {
           disabledActions,
           customActions,
           ...(rtParams && { runtimeParameters: rtParams }),
+          ...fhExtra,
           ...flags,
         });
       }
@@ -293,6 +304,8 @@ export function doRender(section, config, callbacks, options = {}) {
         hiddenActions,
         disabledActions,
         customActions,
+        ...(rtParams && { runtimeParameters: rtParams }),
+        ...(appFlags.fullHeight ? { lazyLoadFullHeight: true, minimumHeight: appFlags.minimumHeight || 600 } : {}),
         ...appFlags,
       });
       break;
