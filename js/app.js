@@ -108,6 +108,11 @@ const DISPLAY = {
   spotter: [
     ['disableSourceSelection', 'Disable source switch', false],
     ['hideSourceSelection', 'Hide source selection', false],
+    ['hideSampleQuestions', 'Hide sample questions', false],
+    ['updatedSpotterChatPrompt', 'Spotter 3 chat interface', false],
+    ['enablePastConversationsSidebar', 'Chat history sidebar', false],
+    ['enableStopAnswerGenerationEmbed', 'Stop-generation button', false],
+    ['showSpotterLimitations', 'Show limitations text', false],
   ],
   liveboard: [
     ['fullHeight', 'Full height', false],
@@ -157,6 +162,10 @@ const HINTS = {
   // spotter
   disableSourceSelection: 'Lock the Spotter data source — visible but not switchable.',
   hideSourceSelection: 'Hide the Spotter data source selector entirely.',
+  updatedSpotterChatPrompt: 'Turn on the new Spotter 3 chat interface (updatedSpotterChatPrompt). Off by default — the cluster must have the Spotter 3 experience enabled for this to take effect. Needs SDK 1.45.0+ / cluster 26.2.0.cl+.',
+  enablePastConversationsSidebar: 'Show the past-conversations (chat history) sidebar so users can reopen earlier Spotter chats. A Spotter 3 feature; needs SDK 1.46.0+ / cluster 26.3.0.cl+ with chat history enabled on the instance.',
+  enableStopAnswerGenerationEmbed: 'Add a “Stop generating” button so users can interrupt an in-progress Spotter answer. Needs SDK 1.48.0+ / cluster 26.5.0.cl+.',
+  showSpotterLimitations: 'Show the small Spotter limitations disclaimer beneath the chat input. Off by default. Needs SDK 1.36.0+ / cluster 10.5.0.cl+.',
   // liveboard / viz
   fullHeight: 'Let the embed grow to its full content height instead of scrolling inside a fixed box.',
   hideLiveboardHeader: 'Hide the entire Liveboard header bar (title, filters, actions).',
@@ -1104,6 +1113,11 @@ function sectionDisplay(s) {
       c.appendChild(toggleField(label, cur, v => setFlag(key, v, def), hint));
     }
   });
+  // Spotter: the chat-interface / history / stop-generation / limitations flags only surface a
+  // feature the CLUSTER already allows — the Spotter experience (2 / 3) must be enabled instance-side.
+  if (s.section === 'spotter') {
+    c.appendChild(el('div', 'sec-note', 'The Spotter 3 chat interface, chat-history sidebar, stop-generation and limitations options only take effect when the matching Spotter experience is enabled on your ThoughtSpot cluster — the SDK flag surfaces the feature, the instance must already allow it.'));
+  }
   // "Show shared-with users" — the strip of viewer avatars in the Liveboard header: the people the
   // board is shared with / who have viewed it (ThoughtSpot's "recently visited / social proof"
   // users). This is the LiveboardUsers action (lives in hiddenActions), so the toggle controls
