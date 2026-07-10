@@ -1179,3 +1179,65 @@ textarea.inp { height: auto; padding: 8px 10px; line-height: 1.5; }
 .aip-banner { font-size: 12.5px; border-radius: 7px; padding: 9px 12px; }
 .aip-banner--err { background: #fdf3f3; border: 1px solid #e8b4b4; color: #a23b3b; }
 .aip-banner--warn { background: #fff8ec; border: 1px solid #f0d9a8; color: #8a6d3b; }
+
+/* ── Custom styles section: theme-builder link, lint, selector picker ──────── */
+.sty-tb-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-decoration: none; font-size: 12.5px; font-weight: 600; padding: 9px 12px; border: 1px solid var(--violet-border); border-radius: 8px; background: var(--violet-soft); color: var(--accent-2); transition: border-color .15s, background .15s, box-shadow .15s; }
+.sty-tb-link:hover { border-color: var(--accent-2); background: #e7eafe; box-shadow: 0 2px 8px rgba(99,102,241,0.14); }
+.sty-tb-arrow { flex: 0 0 auto; font-weight: 700; }
+.sty-beta { display: inline-block; margin-left: 6px; padding: 1px 6px; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; vertical-align: middle; color: var(--accent-2); background: var(--violet-soft); border: 1px solid var(--violet-border); border-radius: 999px; }
+.sty-expose { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 9px 11px; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface); transition: border-color .15s, background .15s; }
+.sty-expose--on { border-style: solid; border-color: var(--accent-2); background: var(--violet-soft); }
+.sty-idpaste { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.sty-idpaste-ta { width: 100%; resize: vertical; min-height: 54px; padding: 7px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.5; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+.sty-row { display: flex; flex-direction: column; gap: 4px; }
+.sty-swatch { flex: 0 0 30px; width: 30px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.lint-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; line-height: 1.45; color: var(--warn); background: var(--warn-soft); border: 1px solid #ead9a8; border-radius: 6px; padding: 5px 8px; }
+.lint-fix { font-size: 10.5px; padding: 2px 8px; border: 1px solid #ead9a8; border-radius: 999px; background: var(--surface); color: var(--warn); cursor: pointer; font-family: var(--mono); white-space: nowrap; }
+.lint-fix:hover { border-color: var(--warn); background: #fff; }
+.inp--invalid, .inp--invalid:focus { border-color: var(--danger) !important; box-shadow: 0 0 0 3px var(--danger-soft) !important; }
+.cand-panel { border: 1px solid var(--accent-border); background: var(--accent-soft); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.cand-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cand-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cand-title { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.cand-sub { font-size: 10.5px; line-height: 1.4; color: var(--text-secondary); }
+
+/* Radio list — each row is a selectable option; the left accent bar encodes the stability tier.
+   Capped height with its own scroll so the header + action bar stay in view without page scroll. */
+.cand-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 3px; }
+.cand-row { display: flex; align-items: flex-start; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; padding: 8px 10px; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s; }
+.cand-row.tier-best { border-left-color: var(--success); }
+.cand-row.tier-good { border-left-color: var(--accent); }
+.cand-row.tier-ok   { border-left-color: var(--warn); }
+.cand-row.tier-weak { border-left-color: var(--border-light); }
+.cand-row:hover:not(.is-added) { background: var(--surface-2); }
+.cand-row.is-sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.cand-row.is-added { opacity: .6; cursor: default; }
+
+/* Radio dot — fills when selected, becomes a green check once the rule has been added. */
+.cand-radio { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--border-light); background: var(--surface); position: relative; transition: border-color .15s; }
+.cand-row.is-sel .cand-radio { border-color: var(--accent); }
+.cand-row.is-sel .cand-radio::after { content: ''; position: absolute; inset: 2px; border-radius: 50%; background: var(--accent); }
+.cand-row.is-added .cand-radio { border-color: var(--success); background: var(--success); }
+.cand-row.is-added .cand-radio::after { content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; line-height: 1; color: #fff; }
+
+.cand-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.cand-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cand-badge { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.badge-best { color: var(--success); background: var(--success-soft); border: 1px solid #c0dccf; }
+.badge-good { color: var(--accent);  background: var(--accent-soft);  border: 1px solid var(--accent-border); }
+.badge-ok   { color: var(--warn);    background: var(--warn-soft);    border: 1px solid #ead9a8; }
+.badge-weak { color: var(--text-muted); background: var(--surface-3); border: 1px solid var(--border-light); }
+.cand-ctx { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand-done { flex: 0 0 auto; font-size: 10px; font-weight: 700; color: var(--success); white-space: nowrap; }
+
+/* Full selector, always readable — wraps gracefully instead of truncating to "[data-t…". */
+.cand-sel { font-family: var(--mono); font-size: 11.5px; line-height: 1.45; color: var(--text-primary); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; overflow-wrap: anywhere; }
+.cand-row.is-sel .cand-sel { background: var(--surface); }
+.cand-why { font-size: 10.5px; line-height: 1.4; color: var(--text-secondary); }
+
+/* Footer action bar — choose the action once and apply it to the selected target. */
+.cand-bar { display: flex; flex-direction: column; gap: 6px; padding-top: 9px; border-top: 1px solid var(--accent-border); }
+.cand-bar-lbl { font-size: 10.5px; font-weight: 600; color: var(--text-secondary); }
+.cand-bar-row { display: flex; align-items: center; gap: 8px; }
+.cand-act { flex: 1 1 auto; min-width: 0; height: 30px; font-size: 11.5px; }
+.cand-add { align-self: center; margin: 0; flex: 0 0 auto; white-space: nowrap; }
