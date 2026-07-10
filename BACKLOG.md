@@ -1,7 +1,7 @@
 # BACKLOG.md — the organization's task queue
 
 This is the CEO's work queue and the **one lever the user pulls to steer the org**: edit priorities
-here and the next `/improve-cycle` picks the top open item. Every item has concrete **acceptance
+here and the next `/ceo-improve-cycle` picks the top open item. Every item has concrete **acceptance
 criteria** so an autonomous cycle knows when it is done.
 
 **Three standing programs** (= the org's goals, see `CLAUDE.md`):
@@ -34,9 +34,9 @@ changes, criteria edits, and row deletions are the human CEO's lever alone.
 | W2 | P2 | SDK bump 1.49.0 → 1.50.x | Detector already reports 4 newer versions (1.49.1–1.50.0). Follow the playbook's SDK-bump procedure: changelog check against the imported symbols, bump `ts-sdk-version.json` + `js/embed.js` together, full gates, PR with breaking-change assessment; reviewer verifies embeds against a live TS instance before merge | open | — |
 | R1 | P3 | Refactor `js/app.js` (~5.5k lines) | Extract cohesive modules ONE PR at a time (e.g. the `cfb*` custom-filter-bar code, `sectionStyles`, the code generator), each behind the full gate (smoke + headless, no behavior change). Track sub-steps below | open | — |
 | M1 | P3 | Promote the `boot` CI job to a required check | After ~3 consecutive green `boot` runs on real PRs (proving headless Chrome is stable on the runner), add `boot` to the required status checks alongside `smoke`/`esm-parse`/`guard`, and record the change here | open | ⚠ protection |
-| M2 | P3 | First org retrospective | After the first 3 merged improve-cycle PRs: review them for process failures (gates that missed something, ambiguous rules, wasted agent effort), update `CLAUDE.md`/skills/playbook accordingly, and file follow-up M items. Recurs informally after every ~5 cycles | open | ⚠ CLAUDE.md |
+| M2 | P3 | First org retrospective | After the first 3 merged ceo-improve-cycle PRs: review them for process failures (gates that missed something, ambiguous rules, wasted agent effort), update `CLAUDE.md`/skills/playbook accordingly, and file follow-up M items. Recurs informally after every ~5 cycles | open | ⚠ CLAUDE.md |
 | M3 | P4 | Doc-watch robustness | Evaluate the hash-based doc detection after 2–3 real ts-watch runs: false-positive rate (dynamic page churn), false-negative risk (client-rendered pages), and whether the `docs/ts-watch-snapshots/` diffing convention gives the agent enough context for surgical, sourced edits | open | — |
-| M4 | P3 | Named department agents | The five departments exist as visible agent definitions in `.claude/agents/` (researcher, architect, implementer, reviewer, qa-verifier), tracked in git, and the improve-cycle playbook dispatches them by name with built-in fallbacks | done — this row's PR | — |
+| M4 | P3 | Named department agents | The five departments exist as visible agent definitions in `.claude/agents/` (researcher, architect, implementer, reviewer, qa-verifier), tracked in git, and the ceo-improve-cycle playbook dispatches them by name with built-in fallbacks | done — this row's PR | — |
 
 ## Detail — R1 refactoring program (one module per cycle)
 
