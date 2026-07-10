@@ -15,7 +15,9 @@ Given a backlog item or question, deliver a brief containing:
    paths between them.
 2. **What to reuse** — existing helpers/utilities that already do part of the job (this repo has
    many: `pushRuntimeFilters`, `sanitize`, `customSelect`, `el`, the `cfb*` subsystem…). New code
-   that duplicates an existing helper is a review failure — find the helper first.
+   that duplicates an existing helper is a review failure — find the helper first. Flag the sharp
+   edges of what you recommend: e.g. `el(tag, cls, html)`'s third arg goes through `innerHTML` —
+   TS/link-derived strings must never flow into it (omit the arg and set `textContent` after).
 3. **Risks & coupling** — what else touches these code paths, which critical rules from `CLAUDE.md`
    apply, whether the item's premise still holds (several backlog findings predate later fixes —
    verify against current code and say so if already fixed).
