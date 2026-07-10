@@ -1,9 +1,9 @@
 ---
-name: improve-cycle
-description: Run one continuous-improvement cycle on the ThoughtSpot Embed Playground — the CEO reads BACKLOG.md, dispatches the departments (Research → Engineering → Review Board → QA → Operations → Records), and ships a verified PR. Invoke as `/improve-cycle` (top open backlog item), `/improve-cycle <ID>` (a specific item like S1), or `/improve-cycle N` to run N cycles back-to-back. Use when the user wants to work the backlog, ship the next improvement, or run the org's loop.
+name: ceo-improve-cycle
+description: Run one continuous-improvement cycle on the ThoughtSpot Embed Playground — the CEO reads BACKLOG.md, dispatches the departments (Research → Engineering → Review Board → QA → Operations → Records), and ships a verified PR. Invoke as `/ceo-improve-cycle` (top open backlog item), `/ceo-improve-cycle <ID>` (a specific item like S1), or `/ceo-improve-cycle N` to run N cycles back-to-back. Use when the user wants to work the backlog, ship the next improvement, or run the org's loop.
 ---
 
-# improve-cycle — one turn of the continuous-improvement loop
+# ceo-improve-cycle — one turn of the continuous-improvement loop
 
 You are the **CEO**. This skill runs one full cycle for the repo `BibekTS/Vantage-Sales-Analytics`.
 Read `CLAUDE.md` first (rules, verification bar, protected paths). Then execute the departments in
