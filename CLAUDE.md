@@ -16,21 +16,23 @@ REST calls. Repo: `BibekTS/Vantage-Sales-Analytics` on GitHub; `gh` is authentic
 |---|---|
 | `npm start` | Server + frontend on http://localhost:3000 (also powers Trusted Auth) |
 | `npm run dev` | Same, auto-restart |
-| `npm test` | **The QA gate.** Boots the server, asserts security guards + static restrictions (22 checks) |
+| `npm test` | **The security gate.** Boots the server, asserts security guards + static restrictions |
+| `npm run boot-check` | **The frontend gate.** Boots the server, loads the app in headless Chrome, fails on any JS error |
 | `npm run doctor` | Verify Trusted Auth end-to-end (mints a real test token) |
 | `npm run setup` | Create `.env` from template |
 | `npm run vendor-sdk` | Self-host the pinned SDK into `vendor/` |
 
 **The verification bar for ANY code change (all three, every time):**
-1. **ESM parse** — each `js/*.js` is a browser ES module; a package without `"type":"module"`, so
-   `node --check *.js` mis-parses them as CommonJS. Syntax-check by copying to `.mjs` first, or rely
-   on the headless boot (below), which actually imports them.
-2. **Smoke test** — `npm test` must stay green (currently 22/22). Never weaken an assertion to pass.
-3. **Headless boot** — load http://localhost:3000 in headless Chrome (puppeteer-core is installed;
-   system Chrome at `/Applications/Google Chrome.app/...`; use `createRequire` pointed at the project
-   root — `NODE_PATH` does not work for ESM). Assert the tool shell mounts and there are **zero** JS
-   errors. The only allowed console 404 is the pre-existing `/favicon.ico` on the restricted static
-   server. `/verify` and the improve-cycle skill automate this.
+1. **ESM parse** — each `js/*.js` is a browser ES module; the package is not `"type":"module"`, so
+   `node --check *.js` mis-parses them as CommonJS. Syntax-check by copying to `.mjs` first (CI's
+   `esm-parse` job does exactly this).
+2. **Smoke test** — `npm test` must stay green (all checks — never weaken an assertion to pass, and
+   don't hardcode the count anywhere: it grows).
+3. **Headless boot** — `npm run boot-check` (scripts/boot-check.mjs). Asserts the tool shell mounts
+   with **zero** JS console/page errors and no non-favicon 4xx. The only allowed console 404 is the
+   pre-existing `/favicon.ico` on the restricted static server.
+
+CI (`.github/workflows/ci.yml`) runs the same three plus a `guard` job (protected paths, below).
 
 ## Architecture (files)
 
@@ -44,7 +46,8 @@ REST calls. Repo: `BibekTS/Vantage-Sales-Analytics` on GitHub; `gh` is authentic
 - `js/app.js` — the controller (~5.5k lines): connection, rail, render, the single contextual
   inspector, SDK-code generator, event log. **This monolith is a standing refactor target.**
 - `server.js` — token service + filter proxy + static host. **Fail-closed** (see rules).
-- `scripts/` — `smoke-test.mjs` (the gate), `doctor.mjs`, `setup.mjs`, `vendor-sdk.mjs`.
+- `scripts/` — `smoke-test.mjs` (security gate), `boot-check.mjs` (frontend gate), `doctor.mjs`,
+  `setup.mjs`, `vendor-sdk.mjs`.
 
 ## Critical rules (violate these and you break the app)
 
@@ -66,16 +69,32 @@ REST calls. Repo: `BibekTS/Vantage-Sales-Analytics` on GitHub; `gh` is authentic
 
 ## How the organization works (see BACKLOG.md for the queue)
 
-The **CEO** is the driving session (on-demand, or the weekly ts-watch cloud clone). It reads
-`BACKLOG.md`, dispatches a cycle, and updates the backlog. Departments = subagents/tools:
-Research (`Explore`), Engineering (`Plan` + worktree-isolated implementers), Review Board
-(`/code-review`, `/security-review`), QA (`npm test` + headless boot + CI), Operations
-(`/schedule`, `/loop`, `gh` merge). The cycle is codified in `/improve-cycle`.
+**Three standing goals, in this order of precedence:**
+1. **Improve the app** — the S/R backlog items: stability, features, refactoring.
+2. **Keep it current** — the W items: track ThoughtSpot SDK/doc drift via ts-watch.
+3. **Improve the organization itself** — the M items: sharpen the skills, playbooks, and gates.
+   When a cycle exposes a process failure (a gate that missed something, an ambiguous rule, a
+   duplicated effort), file an M item in `BACKLOG.md` — the org must get better at getting better.
 
-**Every change is a branch + PR** with a verification-evidence section. A PR auto-merges only when:
-CI is green ∧ code review found no confirmed correctness bug ∧ the diff touches **no protected path**.
+**The CEO is the interactive driving session ONLY.** The weekly ts-watch cloud routine is NOT a
+CEO: it runs the `/ts-watch` playbook, opens one PR, and stops — it never runs `/improve-cycle`
+and **never merges anything**. Departments = subagents/tools: Research (`Explore`), Engineering
+(`Plan` + worktree-isolated implementers), Review Board (`/code-review`, `/security-review`),
+QA (`npm test` + `npm run boot-check` + CI), Operations (`/schedule`, `/loop`, `gh` merge).
+The cycle is codified in `/improve-cycle`.
 
-**Protected paths — never auto-merged, always human review:**
+**Every change is a branch + PR** with a verification-evidence section. **Merging `main` deploys
+to PRODUCTION via Vercel — treat every merge as a release.** A PR auto-merges only when ALL hold:
+required CI checks green (`smoke`, `esm-parse`, `guard`) ∧ code review found no confirmed
+correctness bug ∧ the `guard` check passed without needing the `human-approved` label.
+
+**Protected paths — mechanical enforcement.** The CI `guard` job fails any PR touching
 `server.js`, `js/state.js` (the sanitize/security layer), `scripts/smoke-test.mjs`, `.env*`,
-`.github/workflows/*`, `CLAUDE.md`, and priority edits to `BACKLOG.md`. These are the security
-boundary and the org's own constitution.
+`.github/workflows/*`, or `CLAUDE.md` unless a human has added the **`human-approved`** label.
+Hard rules for every agent: **never add that label yourself, never use `gh pr merge --admin`,
+never weaken the guard job** — a red `guard` means "stop and hand this to the human".
+
+**`BACKLOG.md` is NOT guard-protected** (every cycle must update it), but with a bright line:
+a cycle may only change the **Status column**, append **outcome notes**, and **append new rows**.
+Changing Priority values, editing acceptance criteria, or deleting rows is reprioritization —
+that is the human CEO's lever and requires their review.

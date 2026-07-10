@@ -10,7 +10,9 @@
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",
     "test": "node scripts/smoke-test.mjs",
-    "vendor-sdk": "node scripts/vendor-sdk.mjs"
+    "boot-check": "node scripts/boot-check.mjs",
+    "vendor-sdk": "node scripts/vendor-sdk.mjs",
+    "check-ts-updates": "node scripts/check-ts-updates.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -18,5 +20,8 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.3.0"
   }
 }

@@ -1,9 +1,13 @@
 name: CI
 
-# The QA department's required gate. Auto-merge waits on this check.
+# The QA department's gates. Required for merge: smoke, esm-parse, guard.
+# boot is advisory until it proves stable in CI (backlog item M1 promotes it).
+# `labeled`/`unlabeled` triggers let the guard job re-evaluate when a human
+# adds the `human-approved` label to a protected-path PR.
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -13,14 +17,79 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
       - name: Smoke test (security guards + static restrictions)
         run: npm test
+
+  esm-parse:
+    name: esm-parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax-check every module
+        # js/*.js are browser ES modules in a commonjs package — node --check
+        # mis-parses them as CJS unless renamed to .mjs first.
+        run: |
+          set -e
+          mkdir -p /tmp/esm
+          for f in js/*.js; do
+            cp "$f" "/tmp/esm/$(basename "${f%.js}").mjs"
+            node --check "/tmp/esm/$(basename "${f%.js}").mjs"
+            echo "OK $f"
+          done
+          for f in scripts/*.mjs server.js config.js; do
+            node --check "$f"
+            echo "OK $f"
+          done
+
+  boot:
+    name: boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Headless boot (frontend actually loads, console clean)
+        run: npm run boot-check
+
+  guard:
+    name: guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Protected paths require the human-approved label
+        env:
+          HUMAN_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch -q origin "$BASE_REF"
+          CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+          VIOLATIONS=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              server.js|js/state.js|scripts/smoke-test.mjs|.env*|.github/workflows/*|CLAUDE.md)
+                VIOLATIONS="$VIOLATIONS $f" ;;
+            esac
+          done <<< "$CHANGED"
+          if [ -n "$VIOLATIONS" ] && [ "$HUMAN_APPROVED" != "true" ]; then
+            echo "::error::Protected paths changed without the 'human-approved' label:$VIOLATIONS"
+            echo "A human must review this PR and add the label (agents must never add it)."
+            exit 1
+          fi
+          echo "guard: ok"

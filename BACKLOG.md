@@ -4,9 +4,17 @@ This is the CEO's work queue and the **one lever the user pulls to steer the org
 here and the next `/improve-cycle` picks the top open item. Every item has concrete **acceptance
 criteria** so an autonomous cycle knows when it is done.
 
+**Three standing programs** (= the org's goals, see `CLAUDE.md`):
+- **S/R items — improve the app** (stability fixes, features, refactoring)
+- **W items — keep it current** (ThoughtSpot SDK/doc drift, via ts-watch)
+- **M items — improve the org itself** (skills, playbooks, gates; file one whenever a cycle exposes
+  a process failure)
+
 **Statuses:** `open` · `in-progress` · `in-review` (PR open, awaiting human) · `done`.
-**Priority:** P1 (do first) → P4 (someday). **Protected** items touch a protected path (see
+**Priority:** P1 (do first) → P4 (someday). **Protected** items touch a guard-protected path (see
 `CLAUDE.md`) and therefore **never auto-merge** — the cycle opens the PR and stops for human review.
+**Cycles may only change the Status column, append outcome notes, and append rows.** Priority
+changes, criteria edits, and row deletions are the human CEO's lever alone.
 
 > Before starting any item, re-verify it against the current code — several findings below predate
 > later fixes and may be partly or fully resolved. If an item is already fixed, mark it `done` with
@@ -22,8 +30,12 @@ criteria** so an autonomous cycle knows when it is done.
 | S6 | P3 | Double embed render on boot | `setActive→render` and `connect→render` do not both fire a full embed render on first load; measured via a render counter in the headless test | open | — |
 | S7 | P3 | Misc wiring loose ends | Verify each against current code: `searchTokenString` re-renders the embed; `__onFilterChanged` is defined (noted fixed later); Discovery bearer refreshes on autoLogin re-mint; trusted-auth Export path; not-logged-in overlay copy per auth type | open | — |
 | S8 | P4 | Polish batch | Remove dead onboarding CSS; define/replace the undefined `--text` var in `.drill-bar`; auto-prefix `https://` on host input; add a copy-share-link affordance; Esc closes the open modal/overlay; drop the hardcoded seed `liveboardId` in config.js | open | — |
-| W1 | P2 | Build the **ts-watch** pipeline | `scripts/check-ts-updates.mjs` detects SDK/doc drift with the exit-code contract; watermark, playbook, and `/ts-watch` skill exist; weekly cloud routine registered. See `docs/ts-watch-playbook.md` | open | ⚠ smoke-test.mjs |
+| W1 | P2 | Build the **ts-watch** pipeline | `scripts/check-ts-updates.mjs` detects SDK/doc drift with the exit-code contract; watermark, playbook, and `/ts-watch` skill exist; weekly cloud routine registered. See `docs/ts-watch-playbook.md` | in-review | ⚠ smoke-test.mjs |
+| W2 | P2 | SDK bump 1.49.0 → 1.50.x | Detector already reports 4 newer versions (1.49.1–1.50.0). Follow the playbook's SDK-bump procedure: changelog check against the imported symbols, bump `ts-sdk-version.json` + `js/embed.js` together, full gates, PR with breaking-change assessment; reviewer verifies embeds against a live TS instance before merge | open | — |
 | R1 | P3 | Refactor `js/app.js` (~5.5k lines) | Extract cohesive modules ONE PR at a time (e.g. the `cfb*` custom-filter-bar code, `sectionStyles`, the code generator), each behind the full gate (smoke + headless, no behavior change). Track sub-steps below | open | — |
+| M1 | P3 | Promote the `boot` CI job to a required check | After ~3 consecutive green `boot` runs on real PRs (proving headless Chrome is stable on the runner), add `boot` to the required status checks alongside `smoke`/`esm-parse`/`guard`, and record the change here | open | ⚠ protection |
+| M2 | P3 | First org retrospective | After the first 3 merged improve-cycle PRs: review them for process failures (gates that missed something, ambiguous rules, wasted agent effort), update `CLAUDE.md`/skills/playbook accordingly, and file follow-up M items. Recurs informally after every ~5 cycles | open | ⚠ CLAUDE.md |
+| M3 | P4 | Doc-watch robustness | Evaluate the hash-based doc detection after 2–3 real ts-watch runs: false-positive rate (dynamic page churn), false-negative risk (client-rendered pages), and whether the `docs/ts-watch-snapshots/` diffing convention gives the agent enough context for surgical, sourced edits | open | — |
 
 ## Detail — R1 refactoring program (one module per cycle)
 
@@ -42,6 +54,7 @@ same PR as the move. A behavior-changing follow-up, if needed, is a separate ite
 
 ## How to add an item
 
-Append a row with a unique ID, a priority, and **testable** acceptance criteria. If it touches a
-protected path (`server.js`, `state.js`, `smoke-test.mjs`, `.env*`, workflows, `CLAUDE.md`), mark
-it Protected so the cycle knows to stop for review instead of auto-merging.
+Append a row with a unique ID (S=app stability/feature, R=refactor, W=up-to-date, M=meta/org), a
+priority, and **testable** acceptance criteria. If it touches a guard-protected path (`server.js`,
+`js/state.js`, `scripts/smoke-test.mjs`, `.env*`, `.github/workflows/*`, `CLAUDE.md`), mark it
+Protected so the cycle knows the PR will stop at the `guard` check for human review.
