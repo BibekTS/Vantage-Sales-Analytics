@@ -9,9 +9,11 @@ can evolve without rescheduling. The `/ts-watch` skill and the weekly cloud rout
 Keep the playground current — SDK version, drift in the tracked docs, and new embed features —
 **with minimal human intervention**, by opening one reviewable PR per run. Hard guardrails:
 
-- **Never push to `main`.** One PR per run on branch `ts-watch/YYYY-MM-DD`.
+- **Never push to `main`, never merge anything.** One PR per run, left OPEN for human review.
+- **Never add the `human-approved` label, never use `gh pr merge --admin`** — those are the human
+  CEO's alone (see `CLAUDE.md`).
 - **Never modify** `server.js` security guards, `scripts/smoke-test.mjs` assertions, `.env*`, or the
-  token-minting logic. (These are protected paths — see `CLAUDE.md`.)
+  token-minting logic. (These are guard-protected paths — see `CLAUDE.md`.)
 - **Compendium/doc edits are surgical** — smallest possible diff; every new claim carries an inline
   source URL; deprecations get a badge, never a deletion; never restructure anchor ids/TOC.
 - **Feature stubs are additive-only** and marked draft.
@@ -27,26 +29,41 @@ Keep the playground current — SDK version, drift in the tracked docs, and new 
 - **Watermark:** `docs/.ts-watch.json` — the diff baseline. Advances only when a human merges a
   ts-watch PR. `contentHashes` detect edits on unversioned doc pages; `skippedVersions` /
   `features.deferred` let a reviewer say "stop proposing this" by editing the file during review;
-  `openPr` prevents duplicate PRs; `watchedUrls` lives here (not hardcoded) so the list self-heals
-  when a docs page moves.
+  `watchedUrls` lives here (not hardcoded) so the list self-heals when a docs page moves.
+  Duplicate-PR prevention is deliberately NOT in the watermark (main's copy is always stale while a
+  PR is open) — it's the `gh pr list` check in step 0 below.
+- **Doc snapshots:** `docs/ts-watch-snapshots/<url-slug>.txt` — the extracted text of each watched
+  page, saved by every ts-watch PR alongside the updated hash. A hash says *that* a page changed;
+  the snapshot lets the next run diff live text against it to see *what* changed, which is what
+  makes surgical, per-claim-sourced doc edits possible instead of guesswork.
 - **Drift-prone docs:** `docs/tse-best-practices.html` (the compendium), `docs/callback-action.md`,
   `docs/customize-export.md`, and the README trusted-auth section.
 - **Detector:** `scripts/check-ts-updates.mjs` (`npm run check-ts-updates`). Detects only, never
-  edits. Exit codes: `0` no changes (stop silently), `10` changes (act), `1` error (report, stop).
+  edits. Exit codes: `0` no changes (stop silently), `10` changes (act), `1` INTEGRITY error only
+  (pin drift / unreadable baseline — report, stop). Transient network failures are printed as
+  warnings and never change the exit code.
 
 ## Procedure per run
 
-1. **Detect.** `node scripts/check-ts-updates.mjs --json`. Exit `0` → stop silently (if the
-   watermark records an `openPr`, `gh pr view` it and push to that branch instead of opening a new
-   one). Exit `1` → report the error and stop. Exit `10` → continue.
+0. **Dedupe FIRST.** `gh pr list --state open --json number,headRefName,url` and look for a branch
+   starting `ts-watch/`. If one exists, this run's job is to UPDATE that PR (check out its branch,
+   re-run the detector against it, push refinements) — never open a second ts-watch PR. This check
+   comes before everything else because drift persists until a human merges, so every run between
+   detection and merge re-detects the same changes.
+1. **Detect.** `node scripts/check-ts-updates.mjs --json`. Exit `0` → nothing to do, stop silently.
+   Exit `1` → an integrity error (pin drift, unreadable watermark): report it and stop — do not
+   paper over it. Exit `10` → continue. Warnings in the output are non-fatal (a rate-limited or
+   timed-out source was skipped); note them in the PR body if you open one.
 2. **Categorize** each detected change as **DOC**, **SDK BUMP**, or **FEATURE STUB** and handle per
    the sections below. A change you decide needs no action goes in a "Reviewed, no action" PR section.
 3. **Update the watermark** (`docs/.ts-watch.json`) in the same PR: new hashes, `lastSeenNpmLatest`,
-   `lastProcessedGithubRelease`, `lastRun`, `lastRunOutcome`.
+   `lastProcessedGithubRelease`, `lastRun`, `lastRunOutcome` — and refresh the matching
+   `docs/ts-watch-snapshots/<url-slug>.txt` with the page's extracted text (strip comments, scripts,
+   styles, then tags — same normalization as the detector's `extractText`), so the next run can diff.
 4. **Verify.** `npm test` must pass.
 5. **PR.** Branch `ts-watch/YYYY-MM-DD`, one PR titled `ts-watch: <digest>`, body = digest +
    per-claim sources + SDK old→new with breaking-change assessment + full smoke output + reviewer
-   checklist. Leave it for human review — this touches protected paths and never auto-merges.
+   checklist. Leave it OPEN for human review — it touches guard-protected paths and never auto-merges.
 
 ### SDK bump procedure
 

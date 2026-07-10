@@ -8,8 +8,12 @@
  *
  *   node scripts/vendor-sdk.mjs
  *   # then in js/embed.js change the import URL to:  /vendor/visual-embed-sdk/tsembed.es.js
+ *   # …but KEEP the `// TS-SDK-VERSION: x.y.z` marker above the import — once the version is
+ *   # gone from the URL, that marker is what the smoke-test pin check and the ts-watch detector
+ *   # read. Removing it fails `npm test`.
  *
- * Re-run after bumping SDK_VERSION to refresh the pin.
+ * The pin lives in ts-sdk-version.json (single source of truth; ts-watch bumps it). Re-run this
+ * script after any bump to refresh the vendored copy.
  */
 
 import { mkdir, writeFile, readFile } from 'node:fs/promises';

@@ -40,12 +40,18 @@ const check = (name, pass, detail = '') => { results.push({ name, pass, detail }
 
 // 0) SDK pin single-source-of-truth: ts-sdk-version.json must equal the version in js/embed.js.
 //    ts-watch bumps both together; divergence means a self-hosted vendor copy could mismatch the
-//    runtime import. Pure file check — no server needed.
+//    runtime import. Pure file check — no server needed. Matches the unpkg URL or, when the import
+//    was switched to the self-hosted /vendor/ path, the `// TS-SDK-VERSION: x.y.z` marker line.
+//    Wrapped so a missing/malformed file reports a clean ✗ instead of crashing before the summary.
 {
-  const pin = JSON.parse(readFileSync(path.join(ROOT, 'ts-sdk-version.json'), 'utf8')).version;
-  const embed = readFileSync(path.join(ROOT, 'js/embed.js'), 'utf8');
-  const m = embed.match(/visual-embed-sdk@(\d+\.\d+\.\d+)/);
-  check('SDK pin consistent: ts-sdk-version.json === js/embed.js', !!m && m[1] === pin, `json=${pin} embed=${m ? m[1] : 'not found'}`);
+  try {
+    const pin = JSON.parse(readFileSync(path.join(ROOT, 'ts-sdk-version.json'), 'utf8')).version;
+    const embed = readFileSync(path.join(ROOT, 'js/embed.js'), 'utf8');
+    const m = embed.match(/visual-embed-sdk@(\d+\.\d+\.\d+)/) || embed.match(/TS-SDK-VERSION:\s*(\d+\.\d+\.\d+)/);
+    check('SDK pin consistent: ts-sdk-version.json === js/embed.js', !!m && m[1] === pin, `json=${pin} embed=${m ? m[1] : 'not found'}`);
+  } catch (e) {
+    check('SDK pin consistent: ts-sdk-version.json === js/embed.js', false, e.message);
+  }
 }
 
 async function waitForReady(timeoutMs = 8000) {
