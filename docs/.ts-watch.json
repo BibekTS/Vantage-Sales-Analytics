@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "lastRun": null,
+  "lastRunOutcome": "seeded",
+  "sdk": {
+    "pinnedVersion": "1.49.0",
+    "lastSeenNpmLatest": "1.49.0",
+    "lastProcessedGithubRelease": "v1.49.0",
+    "skippedVersions": []
+  },
+  "releaseNotes": {
+    "watchedUrls": [
+      "https://developers.thoughtspot.com/docs/whats-new"
+    ],
+    "contentHashes": {
+      "https://developers.thoughtspot.com/docs/whats-new": "sha256:27e5f4a6e058610d76635366b0d286ab95690621101306ec3f1f3a0739e069dd"
+    }
+  },
+  "features": { "stubbed": [], "deferred": [] },
+  "openPr": null,
+  "_comment": "ts-watch watermark. Advances only when a human merges a ts-watch PR. contentHashes are seeded empty; the first run establishes baselines (so it will report the doc pages as 'new'). skippedVersions / features.deferred let a reviewer say 'stop proposing this' by editing here during PR review. openPr prevents duplicate PRs. server.js does not serve this file."
+}

@@ -12,15 +12,16 @@
  * Re-run after bumping SDK_VERSION to refresh the pin.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const SDK_VERSION = '1.49.0';
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// Single source of truth — keep the pin in ts-sdk-version.json (ts-watch bumps it there).
+const SDK_VERSION = JSON.parse(await readFile(path.join(ROOT, 'ts-sdk-version.json'), 'utf8')).version;
 const BASE = `https://unpkg.com/@thoughtspot/visual-embed-sdk@${SDK_VERSION}/dist/`;
 const ENTRY = 'tsembed.es.js';
-
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT = path.join(ROOT, 'vendor', 'visual-embed-sdk');
 
 // Match static `from './x.js'` and dynamic `import('./x.js')` chunk references.

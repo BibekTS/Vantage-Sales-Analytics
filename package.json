@@ -10,7 +10,8 @@
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",
     "test": "node scripts/smoke-test.mjs",
-    "vendor-sdk": "node scripts/vendor-sdk.mjs"
+    "vendor-sdk": "node scripts/vendor-sdk.mjs",
+    "check-ts-updates": "node scripts/check-ts-updates.mjs"
   },
   "engines": {
     "node": ">=18"

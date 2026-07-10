@@ -4,8 +4,10 @@
 .LSOverride
 *.swp
 
-# Local settings & config
-.claude/
+# Local settings & config (but track the org's shared skills/commands)
+.claude/*
+!.claude/skills/
+!.claude/commands/
 .vscode/mcp.json
 node_modules/
 .env
