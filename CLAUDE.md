@@ -78,10 +78,12 @@ CI (`.github/workflows/ci.yml`) runs the same three plus a `guard` job (protecte
 
 **The CEO is the interactive driving session ONLY.** The weekly ts-watch cloud routine is NOT a
 CEO: it runs the `/ts-watch` playbook, opens one PR, and stops — it never runs `/ceo-improve-cycle`
-and **never merges anything**. Departments = subagents/tools: Research (`Explore`), Engineering
-(`Plan` + worktree-isolated implementers), Review Board (`/code-review`, `/security-review`),
-QA (`npm test` + `npm run boot-check` + CI), Operations (`/schedule`, `/loop`, `gh` merge).
-The cycle is codified in `/ceo-improve-cycle`.
+and **never merges anything**. Departments = the named agents in `.claude/agents/` (fall back to
+built-ins only if unavailable, e.g. a fresh clone): Research (`researcher`; fallback `Explore`),
+Engineering (`architect` + worktree-isolated `implementer`s; fallbacks `Plan`/`general-purpose`),
+Review Board (`reviewer` per lens + `/code-review`, `/security-review`), QA (`qa-verifier` running
+`npm test` + `npm run boot-check` + CI), Operations (`/schedule`, `/loop`, `gh` merge).
+The cycle is codified in `/ceo-improve-cycle` (incl. `discover` bug-hunt mode + per-cycle micro-retro).
 
 **Every change is a branch + PR** with a verification-evidence section. **Merging `main` deploys
 to PRODUCTION via Vercel — treat every merge as a release.** A PR auto-merges only when ALL hold:
