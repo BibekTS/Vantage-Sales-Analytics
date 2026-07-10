@@ -21,28 +21,34 @@ times, re-reading `BACKLOG.md` each time.
   already satisfies the acceptance criteria, mark it `done` with the commit ref and either stop or
   move to the next item (if running a count).
 
+The department agents live in `.claude/agents/` — `researcher`, `architect`, `implementer`,
+`reviewer`, `qa-verifier`. If a named agent is unavailable (e.g. a fresh clone before agent
+discovery), fall back to the built-ins noted per step.
+
 ## 2. Research & Intelligence — brief the area
-- For anything non-trivial, spawn an `Explore` agent to map the exact functions, files, and call
-  sites the item touches, and to surface existing utilities to reuse (do NOT write new code that
-  duplicates an existing helper). Skip only for small, precisely-known edits.
+- For anything non-trivial, spawn the **`researcher`** agent (fallback: built-in `Explore`) to map
+  the exact functions, files, and call sites the item touches, and to surface existing utilities to
+  reuse (do NOT write new code that duplicates an existing helper). Skip only for small,
+  precisely-known edits.
 
 ## 3. Engineering — design & build
-- Spawn a `Plan` agent with the Research brief for a concrete implementation plan (files, functions,
-  the reuse points). Review it against the acceptance criteria.
+- Spawn the **`architect`** agent (fallback: built-in `Plan`) with the Research brief for a concrete
+  implementation plan (files, functions, the reuse points). Review it against the acceptance criteria.
 - Create a branch: `improve/<ID>-<slug>` off the latest `main` (`git fetch && git checkout -b …`).
-- Implement. For parallel/independent items use **worktree isolation**; a single-item cycle can work
-  the branch directly. Follow every rule in `CLAUDE.md` (state.js sanitize discipline, `textContent`
+- Implement: work the branch directly, or delegate to the **`implementer`** agent (fallback:
+  `general-purpose`) with the approved plan. For parallel/independent items use **worktree
+  isolation**. Follow every rule in `CLAUDE.md` (state.js sanitize discipline, `textContent`
   not `innerHTML`, `embed.destroy()` before re-render, numeric/UTC date epochs, `pushRuntimeFilters`).
 
 ## 4. Review Board — audit before shipping
 - Run `/code-review` (medium or higher) on the diff. Fix every **confirmed** correctness finding.
 - If the diff touches auth, serialization, the server, or anything security-adjacent, also run
   `/security-review`.
-- For higher assurance on risky changes, adversarially verify the top findings (spawn skeptic agents
-  prompted to refute each) before accepting the diff as clean.
+- For higher assurance on risky changes, spawn **`reviewer`** agents — one per lens (correctness /
+  security / regression) — prompted to REFUTE the diff, before accepting it as clean.
 
 ## 5. QA — prove it works (the gate)
-Run all three, capture the output for the PR body:
+Delegate to the **`qa-verifier`** agent (or run yourself), capturing output for the PR body:
 1. **ESM parse** — copy each changed `js/*.js` to `.mjs` and `node --check`.
 2. **`npm test`** — all checks green. Never weaken an assertion; never hardcode the check count.
 3. **`npm run boot-check`** — the headless frontend gate (tool shell mounts, 0 JS errors, only the
