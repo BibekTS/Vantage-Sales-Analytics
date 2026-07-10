@@ -1,0 +1,4 @@
+{
+  "version": "1.49.0",
+  "_comment": "Single source of truth for the pinned ThoughtSpot Visual Embed SDK version. scripts/vendor-sdk.mjs reads this; js/embed.js carries the same version literally in its unpkg import URL (a static browser import can't read JSON) marked with `// TS-SDK-VERSION`. scripts/smoke-test.mjs asserts the two agree. ts-watch bumps all of them together."
+}

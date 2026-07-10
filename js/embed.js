@@ -21,6 +21,9 @@ import {
   RuntimeFilterOp,
   CustomActionsPosition,
   CustomActionTarget,
+// TS-SDK-VERSION: 1.49.0 — must equal ts-sdk-version.json (smoke-test asserts it; ts-watch bumps
+// marker + URL + JSON together). If you switch to the self-hosted /vendor/ URL, KEEP this marker:
+// it is what the pin checks read once the version is gone from the import path.
 } from 'https://unpkg.com/@thoughtspot/visual-embed-sdk@1.49.0/dist/tsembed.es.js';
 
 // Base URL for our own backend (token service, write-back, filter proxy).
