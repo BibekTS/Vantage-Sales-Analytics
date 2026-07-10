@@ -1,0 +1,26 @@
+name: CI
+
+# The QA department's required gate. Auto-merge waits on this check.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Smoke test (security guards + static restrictions)
+        run: npm test
