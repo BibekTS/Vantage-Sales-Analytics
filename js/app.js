@@ -398,7 +398,11 @@ function applyTrustedAuthAvailability() {
 
 // ── Config bridge (state → embed.js/initSDK shape) ─────────────────────────────
 function hasStyles(s) {
-  return Object.keys(s.styles.variables || {}).length || Object.keys(s.styles.rules || {}).length;
+  return Object.keys(s.styles.variables || {}).length || Object.keys(s.styles.rules || {}).length || !!s.styles.cssUrl;
+}
+// Beta: customizations.content (UI-text relabels) — separate from customizations.style above.
+function hasContent(s) {
+  return Object.keys(s.styles.strings || {}).length || Object.keys(s.styles.stringIDs || {}).length;
 }
 function buildConfig() {
   const s = getState();
@@ -413,11 +417,25 @@ function buildConfig() {
     executeSearch: s.executeSearch,
   };
   if (hasStyles(s)) {
+    const style = {};
+    // customCSSUrl loads FIRST; the inline customCSS below overrides it on conflict (SDK-documented order).
+    if (s.styles.cssUrl) style.customCSSUrl = s.styles.cssUrl;
     const customCSS = {};
     if (Object.keys(s.styles.variables).length) customCSS.variables = s.styles.variables;
     if (Object.keys(s.styles.rules).length) customCSS.rules_UNSTABLE = s.styles.rules;
-    cfg._customStyles = { customCSS };
+    if (Object.keys(customCSS).length) style.customCSS = customCSS;
+    cfg._customStyles = style;
   }
+  if (hasContent(s)) {
+    // customizations.content — UI-only text relabels. Does NOT reach server-rendered exports (CSV/XLSX/PDF).
+    const content = {};
+    if (Object.keys(s.styles.strings).length) content.strings = s.styles.strings;
+    if (Object.keys(s.styles.stringIDs).length) content.stringIDs = s.styles.stringIDs;
+    cfg._customContent = content;
+  }
+  // exposeTranslationIDs is a per-embed ViewConfig flag (not customizations.content) — carried on the
+  // config and applied per embed in doRender. On: every label renders as <string[stringID]> for ID discovery.
+  if (s.styles.exposeIds) cfg._exposeTranslationIDs = true;
   if (s.authType !== 'None') cfg.trustedAuth = buildTrustedAuthConfig(s.auth);
   window.TS_CONFIG = cfg; // keep a single consistent config object around
   return cfg;
@@ -2237,114 +2255,398 @@ function aiInsightCard(query) {
 }
 
 // — Custom styles —
+// Candidates from the last "element HTML" paste — module-level so the picker panel survives
+// the full inspector re-render that follows every setState (same pattern as pendingSpotterQuery).
+let styCandidates = null;
+// Which candidate selector is currently chosen in the picker (survives re-renders too).
+let candSelected = null;
+
 function sectionStyles(s) {
   const c = el('div', 'sec-body');
-  c.appendChild(el('div', 'sec-note', 'CSS variables match standalone TS styling; rules_UNSTABLE target elements by selector.'));
-  // Variables
+  c.appendChild(el('div', 'sec-note', 'Variables re-theme the embed (documented, stable). Rules (rules_UNSTABLE) target elements by CSS selector — powerful, but selectors may shift across TS releases.'));
+
+  // Theme Builder — build a theme visually in ThoughtSpot, then paste the variables back here.
+  const tbLink = el('a', 'sty-tb-link');
+  tbLink.href = 'https://try-everywhere.thoughtspot.cloud/v2/#/everywhere/playground/theme-builder';
+  tbLink.target = '_blank'; tbLink.rel = 'noopener noreferrer';
+  tbLink.innerHTML = '<span>🎨 Open ThoughtSpot Theme Builder</span><span class="sty-tb-arrow">↗</span>';
+  c.appendChild(tbLink);
+  c.appendChild(el('div', 'fld-hint', 'Design a theme visually there, then paste its generated variables or CSS into the box below.'));
+
+  // Variables — with autocomplete over the documented --ts-var catalog
   c.appendChild(el('div', 'sub-lbl', 'CSS variables'));
+  const dl = el('datalist'); dl.id = 'ts-var-list';
+  TS_VAR_ALL.forEach(name => { const o = el('option'); o.value = name; dl.appendChild(o); });
+  c.appendChild(dl);
   const vars = el('div', 'rows');
   Object.entries(s.styles.variables).forEach(([k, v]) => vars.appendChild(kvRow(k, v, 'variables')));
   c.appendChild(vars);
   const addVar = el('button', 'sec-add', '+ Add variable');
   addVar.addEventListener('click', () => { const st = { ...getState().styles }; st.variables = { ...st.variables, '': '' }; setState({ styles: st }); renderInspector(); });
   c.appendChild(addVar);
-  // Parse Element — paste DevTools HTML to extract a CSS selector
-  c.appendChild(el('div', 'sub-lbl', 'Parse element'));
-  const parseWrap = el('div', 'fld');
-  const parseHint = el('div', 'fld-hint', 'In ThoughtSpot: right-click any element → Inspect → right-click the node → Copy → Copy element. Paste below.');
-  const parseArea = el('textarea', 'inp');
-  parseArea.placeholder = 'Paste element HTML from DevTools…';
-  parseArea.style.cssText = 'height:58px;resize:vertical;font-family:var(--mono);font-size:11px;padding:7px 10px;';
-  const parseBtn = el('button', 'sec-add', '→ Extract selector');
-  parseBtn.style.marginTop = '4px';
-  parseBtn.addEventListener('click', () => {
-    const raw = parseArea.value.trim();
-    if (!raw) { toast('Paste some HTML first.'); return; }
-    const doc = new DOMParser().parseFromString(raw, 'text/html');
-    const node = doc.body.firstElementChild;
-    if (!node) { toast('Could not parse — paste the full opening tag from DevTools.'); return; }
-    let selector = null;
-    if (node.dataset.testid)                selector = `[data-testid="${node.dataset.testid}"]`;
-    else if (node.getAttribute('aria-label')) selector = `[aria-label="${node.getAttribute('aria-label')}"]`;
-    else if (node.id)                         selector = `#${node.id}`;
-    else if (node.className && typeof node.className === 'string') {
-      const first = node.className.trim().split(/\s+/)[0];
-      if (first) selector = `.${first}`;
-    }
-    if (!selector) { toast('No usable selector found (no data-testid, aria-label, id, or class).'); return; }
-    const st = { ...getState().styles };
-    st.rules = { ...st.rules, [selector]: { display: 'none !important' } };
-    setState({ styles: st });
-    parseArea.value = '';
-    renderInspector();
-    toast(`Added: ${selector}`, 'success');
-  });
-  parseWrap.append(parseHint, parseArea, parseBtn);
-  c.appendChild(parseWrap);
 
-  // Rules
+  // Element rules — ONE smart input; the kind of paste is auto-detected.
   c.appendChild(el('div', 'sub-lbl', 'CSS rules (rules_UNSTABLE)'));
-  // Paste a full CSS block — parsed (via the browser's own CSS engine) into the rule rows below.
   const pasteWrap = el('div', 'fld');
-  const pasteHint = el('div', 'fld-hint', 'Paste a full CSS block (selector { declarations }). Each rule is added to the list below; hex colors may normalise to rgb().');
+  const pasteHint = el('div', 'fld-hint', 'One box, four inputs — paste any of: a CSS block, a rules_UNSTABLE object, element HTML from DevTools (right-click → Copy → Copy element), or an exported styles JSON. Auto-detected.');
   const pasteArea = el('textarea', 'inp');
-  pasteArea.placeholder = 'button:has([*|href="#rd-icon-more"]) {\n  opacity: 1 !important;\n  visibility: visible !important;\n}';
+  pasteArea.placeholder = '.selector { display: none !important; }\nrules_UNSTABLE: { \'[class*="…"]\': { … } }\n<button class="…">…</button>\n{ "variables": { … }, "rules": { … } }';
   pasteArea.style.cssText = 'height:92px;resize:vertical;font-family:var(--mono);font-size:11px;padding:7px 10px;';
-  const pasteBtn = el('button', 'sec-add', '→ Add CSS');
+  const pasteBtn = el('button', 'sec-add', '→ Add');
   pasteBtn.style.marginTop = '4px';
   pasteBtn.addEventListener('click', () => {
     const raw = pasteArea.value.trim();
-    if (!raw) { toast('Paste some CSS first.'); return; }
-    const { rules: parsed, error } = parseCssText(raw);
-    if (error) { toast(`Could not parse CSS: ${error}`, 'error'); return; }
-    const sels = Object.keys(parsed);
-    if (!sels.length) { toast('No rules found — include at least one selector { … } block.', 'error'); return; }
+    if (!raw) { toast('Paste CSS, a rules object, element HTML, or styles JSON first.'); return; }
+    const res = detectPaste(raw);
+    if (res.error) { toast(`Could not parse (${res.kind}): ${res.error}`, 'error'); return; }
+    if (res.kind === 'html') {
+      if (!res.candidates.length) { toast('No usable selector found in that HTML (no data-testid, aria-label, id, or class).', 'error'); return; }
+      styCandidates = res.candidates;
+      candSelected = null;
+      pasteArea.value = '';
+      renderInspector();
+      return;
+    }
+    const nVars = Object.keys(res.vars || {}).length, nRules = Object.keys(res.rules || {}).length;
+    if (!nVars && !nRules && !res.cssUrl) { toast('Nothing found — include at least one rule, variable, or cssUrl.', 'error'); return; }
     const st = { ...getState().styles };
-    st.rules = { ...st.rules, ...parsed };
+    if (nVars) st.variables = { ...st.variables, ...res.vars };
+    if (nRules) {
+      // Merge per selector (re-pasting a selector adds/overrides its declarations, never wipes them).
+      const merged = { ...st.rules };
+      Object.entries(res.rules).forEach(([sel, d]) => { merged[sel] = { ...(merged[sel] || {}), ...d }; });
+      st.rules = merged;
+    }
+    if (res.cssUrl) st.cssUrl = res.cssUrl;
     setState({ styles: st });
     pasteArea.value = '';
     renderInspector();
-    toast(`Added ${sels.length} rule${sels.length > 1 ? 's' : ''}.`, 'success');
+    const bits = [];
+    if (nRules) bits.push(`${nRules} rule${nRules > 1 ? 's' : ''}`);
+    if (nVars) bits.push(`${nVars} variable${nVars > 1 ? 's' : ''}`);
+    if (res.cssUrl) bits.push('stylesheet URL');
+    toast(`Added ${bits.join(' + ')}.`, 'success');
   });
   pasteWrap.append(pasteHint, pasteArea, pasteBtn);
   c.appendChild(pasteWrap);
+
+  if (styCandidates) c.appendChild(candidatePicker());
+
   const rules = el('div', 'rows');
   Object.entries(s.styles.rules).forEach(([sel, decls]) => rules.appendChild(ruleRow(sel, decls)));
   c.appendChild(rules);
   const addRule = el('button', 'sec-add', '+ Add rule');
   addRule.addEventListener('click', () => { const st = { ...getState().styles }; st.rules = { ...st.rules, '': {} }; setState({ styles: st }); renderInspector(); });
+  c.appendChild(addRule);
+
+  // Advanced — hosted stylesheet + share/import
+  c.appendChild(el('div', 'sub-lbl', 'Advanced'));
+  c.appendChild(textField('Stylesheet URL (customCSSUrl)', s.styles.cssUrl, v => {
+    const st = { ...getState().styles }; st.cssUrl = v; setState({ styles: st });
+  }, 'https://cdn.example.com/ts-theme.css'));
+  c.appendChild(el('div', 'fld-hint', 'Loads before the inline overrides above (they win on conflict). The URL host must be allowlisted under Develop → Security settings → CSP style-src on your TS instance.'));
+  const exportBtn = el('button', 'sec-add', '⧉ Copy styles JSON');
+  exportBtn.addEventListener('click', async () => {
+    const cur = getState().styles;
+    const json = JSON.stringify({ variables: cur.variables, rules: cur.rules, ...(cur.cssUrl && { cssUrl: cur.cssUrl }) }, null, 2);
+    try { await navigator.clipboard.writeText(json); toast('Styles JSON copied — paste it into the box above on any setup to import.', 'success'); }
+    catch { toast('Clipboard unavailable — copy the customizations block from the SDK Code tab instead.', 'error'); }
+  });
+  c.appendChild(exportBtn);
+
+  // Text overrides (Beta) — customizations.content. Sibling of customizations.style above.
+  const betaLbl = el('div', 'sub-lbl');
+  betaLbl.innerHTML = 'Text overrides <span class="sty-beta">Beta</span>'; // static markup, no user data
+  c.appendChild(betaLbl);
+  c.appendChild(el('div', 'sec-note', 'Relabel on-screen UI text in the embed (customizations.content). UI-only — this does NOT change exported CSV / XLSX / PDF, which ThoughtSpot renders server-side. Only system text is overridable, not user-created names or titles.'));
+
+  // strings — literal, case-sensitive, replaces EVERY matching substring
+  c.appendChild(el('div', 'fld-hint', 'Literal swaps (strings): left = exact UI text, right = replacement. Case-sensitive and global, so order matters — define a longer phrase before the word it contains (e.g. "Pin to Liveboard" before "Liveboard").'));
+  const strs = el('div', 'rows');
+  Object.entries(s.styles.strings).forEach(([k, v]) => strs.appendChild(strRow(k, v, 'strings', 'Liveboard', 'Dashboard')));
+  c.appendChild(strs);
+  const addStr = el('button', 'sec-add', '+ Add text swap');
+  addStr.addEventListener('click', () => { const st = { ...getState().styles }; st.strings = { ...st.strings, '': '' }; setState({ styles: st }); renderInspector(); });
+  c.appendChild(addStr);
+
+  // stringIDs — precise per-ID overrides; win over a literal swap on conflict
+  c.appendChild(el('div', 'fld-hint', 'ID-based swaps (stringIDs): left = ThoughtSpot string ID, right = replacement. Precise and stable, and wins over a literal swap on conflict. Turn on "Show translation IDs" below to discover an ID — each label then renders as &lt;string[stringID]&gt; (e.g. &lt;Liveboards[Facet.objectType.pinboards]&gt;). Then paste a copied label into the Extract box to auto-add rows — or paste a whole label straight into a left field and it keeps just the ID.'));
+  const sids = el('div', 'rows');
+  Object.entries(s.styles.stringIDs).forEach(([k, v]) => sids.appendChild(strRow(k, v, 'stringIDs', 'Facet.objectType.pinboards', 'Dashboards')));
+  c.appendChild(sids);
+  const addSid = el('button', 'sec-add', '+ Add string ID');
+  addSid.addEventListener('click', () => { const st = { ...getState().styles }; st.stringIDs = { ...st.stringIDs, '': '' }; setState({ styles: st }); renderInspector(); });
+  c.appendChild(addSid);
+
+  // Discovery aid — reload the embed with exposeTranslationIDs so every label renders as its
+  // string ID (<label[String.Id]>). Read the ID for the text you want, add a swap above, toggle off.
+  const expose = el('div', 'sty-expose' + (s.styles.exposeIds ? ' sty-expose--on' : ''));
+  expose.appendChild(toggleField('Show translation IDs', s.styles.exposeIds, (on) => {
+    setState({ styles: { ...getState().styles, exposeIds: on } });
+    applyConfig(); render(); renderInspector();
+  }, 'Reloads the embed with exposeTranslationIDs=true — every label shows as <string[stringID]>. Copy the ID into a swap above, then turn this off.'));
+  expose.appendChild(el('div', 'fld-hint', s.styles.exposeIds
+    ? 'ON — the embed now renders each label as &lt;string[stringID]&gt;, e.g. &lt;Liveboards[Facet.objectType.pinboards]&gt;. Copy the ID inside the [ ] into a swap above, then turn this off to see normal text.'
+    : 'Reloads the embed showing every label as its string ID, so you can find the one to swap.'));
+  c.appendChild(expose);
+
+  // Bulk capture — paste labels copied from the embed (with "Show translation IDs" on) and auto-create
+  // a swap row per unique [stringID], seeding the replacement with the original text to edit. Rows are
+  // appended straight into `sids` above (no full re-render) so this status line survives.
+  const grab = el('div', 'sty-idpaste');
+  grab.appendChild(el('div', 'fld-hint', 'Easier than typing: with "Show translation IDs" on, select a label in the embed, copy it, paste it (or several) below, and Extract — one row is created per ID with the original wording prefilled for you to edit.'));
+  const ta = el('textarea', 'inp sty-idpaste-ta');
+  ta.rows = 3;
+  ta.placeholder = 'Paste exposed labels, e.g.\n|| AI Highlights [liveboard.highlights.title] ||\nCountry || (Select) [checkboxFilter.emptyFilterTextPlaceholder] ||';
+  grab.appendChild(ta);
+  const grabMsg = el('div', 'fld-hint');
+  const grabBtn = el('button', 'sec-add', '⤵ Extract IDs → add rows');
+  grabBtn.addEventListener('click', () => {
+    const pairs = parseExposedLabels(ta.value);
+    if (!pairs.length) { grabMsg.textContent = 'No [stringID] found — make sure you copied a label while "Show translation IDs" was on.'; return; }
+    const st = { ...getState().styles }; const b = { ...st.stringIDs };
+    let added = 0;
+    pairs.forEach(({ id, text }) => {
+      if (id in b) return; // already have a row for this ID — don't clobber its replacement
+      b[id] = text || '';
+      sids.appendChild(strRow(id, text || '', 'stringIDs', 'Facet.objectType.pinboards', 'Dashboards'));
+      added++;
+    });
+    st.stringIDs = b; setState({ styles: st });
+    ta.value = '';
+    const dup = pairs.length - added;
+    grabMsg.textContent = `Added ${added} new ID${added === 1 ? '' : 's'}${dup ? ` (${dup} already present)` : ''}. Edit the right column above, then Apply.`;
+  });
+  grab.append(grabBtn, grabMsg);
+  c.appendChild(grab);
+
   const apply = el('button', 'sec-apply', 'Apply — reload embed');
   apply.addEventListener('click', () => { applyConfig(); render(); });
-  c.append(addRule, apply);
-  const count = Object.keys(s.styles.variables).length + Object.keys(s.styles.rules).length;
+  c.appendChild(apply);
+  const count = Object.keys(s.styles.variables).length + Object.keys(s.styles.rules).length + (s.styles.cssUrl ? 1 : 0)
+    + Object.keys(s.styles.strings).length + Object.keys(s.styles.stringIDs).length + (s.styles.exposeIds ? 1 : 0);
   return accordion('Custom styles', count, c);
 }
+
+// Ranked selector candidates extracted from pasted DevTools HTML (root + all descendants).
+// Lives outside the state → survives re-renders via the module-level styCandidates.
+const CAND_TIER_LABEL = { best: 'Most stable', good: 'Stable', ok: 'Fair', weak: 'Risky' };
+// Select-then-act picker: the candidates are alternative ways to hit the SAME element, so you
+// choose ONE (radio), then pick the action once in the footer bar — no per-row dropdown clutter.
+function candidatePicker() {
+  const panel = el('div', 'cand-panel');
+
+  // Header — what the list is and how to use it.
+  const head = el('div', 'cand-head');
+  const heading = el('div', 'cand-heading');
+  const n = styCandidates.length;
+  const title = el('div', 'cand-title'); title.textContent = `${n} way${n === 1 ? '' : 's'} to target that element`;
+  const sub = el('div', 'cand-sub'); sub.textContent = 'These all point at the same element. Pick the most stable one, choose what to do, then Add.';
+  heading.append(title, sub);
+  const close = el('button', 'frow-x', '✕'); close.type = 'button'; close.title = 'Dismiss';
+  close.addEventListener('click', () => { styCandidates = null; candSelected = null; renderInspector(); });
+  head.append(heading, close);
+  panel.appendChild(head);
+
+  // Default selection: keep the prior pick if it's still un-added, else the top un-added row.
+  if (!candSelected || !styCandidates.some(c => c.selector === candSelected && !c.added)) {
+    const open = styCandidates.find(c => !c.added);
+    candSelected = open ? open.selector : (styCandidates[0] ? styCandidates[0].selector : null);
+  }
+
+  const list = el('div', 'cand-list');
+  const rowEls = [];
+  styCandidates.forEach(cand => {
+    const tier = cand.tier || 'weak';
+    const row = el('div', `cand-row tier-${tier}` + (cand.added ? ' is-added' : '') + (cand.selector === candSelected ? ' is-sel' : ''));
+    if (!cand.added) { row.setAttribute('role', 'button'); row.tabIndex = 0; }
+
+    const radio = el('span', 'cand-radio');
+    const body = el('div', 'cand-body');
+
+    // Stability badge + which element this matches (+ an "Added" flag once used).
+    const top = el('div', 'cand-top');
+    const badge = el('span', `cand-badge badge-${tier}`); badge.textContent = CAND_TIER_LABEL[tier];
+    const ctx = el('span', 'cand-ctx'); ctx.textContent = `<${cand.tag}>` + (cand.isRoot ? ' · the element you pasted' : '');
+    top.append(badge, ctx);
+    if (cand.added) top.append(el('span', 'cand-done', '✓ Added'));
+
+    // Full selector (wraps, never truncated) + plain-language stability reason.
+    const selEl = el('code', 'cand-sel'); selEl.textContent = cand.selector;
+    const why = el('div', 'cand-why'); why.textContent = cand.why;
+    body.append(top, selEl, why);
+    row.append(radio, body);
+
+    if (!cand.added) {
+      const pick = () => { candSelected = cand.selector; rowEls.forEach(r => r.classList.toggle('is-sel', r === row)); };
+      row.addEventListener('click', pick);
+      row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    }
+    rowEls.push(row);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+
+  // Footer action bar — choose the action once, apply to the selected target.
+  const bar = el('div', 'cand-bar');
+  const barLbl = el('div', 'cand-bar-lbl'); barLbl.textContent = 'Do this to the selected target:';
+  const barRow = el('div', 'cand-bar-row');
+  const act = el('select', 'inp inp-sm cand-act');
+  act.innerHTML = '<option value="hide">Hide the element</option><option value="show">Force it to show</option><option value="custom">Add a blank rule to edit</option>';
+  const add = el('button', 'sec-apply cand-add', '+ Add rule');
+  add.addEventListener('click', () => {
+    const cand = styCandidates.find(c => c.selector === candSelected && !c.added);
+    if (!cand) { toast('Pick a target above first.'); return; }
+    const decls = act.value === 'hide' ? { display: 'none !important' }
+      : act.value === 'show' ? { display: 'block !important', opacity: '1 !important', visibility: 'visible !important' }
+      : {};
+    const st = { ...getState().styles };
+    st.rules = { ...st.rules, [cand.selector]: { ...(st.rules[cand.selector] || {}), ...decls } };
+    cand.added = true; candSelected = null; // re-derive next open row on rebuild
+    setState({ styles: st }); renderInspector();
+    toast(`Added: ${cand.selector}`, 'success');
+  });
+  barRow.append(act, add);
+  bar.append(barLbl, barRow);
+  panel.appendChild(bar);
+
+  return panel;
+}
 function kvRow(key, val, bucket) {
+  const wrap = el('div', 'sty-row');
   const r = el('div', 'frow');
   const k = el('input', 'inp inp-sm'); k.placeholder = '--ts-var-root-background'; k.value = key;
+  k.setAttribute('list', 'ts-var-list'); // autocomplete over the documented --ts-var catalog
   const v = el('input', 'inp inp-sm'); v.placeholder = '#0F1623'; v.value = val;
+  const sw = el('input', 'sty-swatch'); sw.type = 'color'; sw.title = 'Pick a color';
   const x = el('button', 'frow-x', '✕');
-  const commit = () => { const st = { ...getState().styles }; const b = { ...st[bucket] }; delete b[key]; if (k.value.trim()) b[k.value.trim()] = v.value.trim(); st[bucket] = b; setState({ styles: st }); };
-  k.addEventListener('change', commit); v.addEventListener('change', commit);
+  const lint = el('div', 'lint-row'); lint.hidden = true;
+  const commit = () => {
+    const st = { ...getState().styles }; const b = { ...st[bucket] }; delete b[key];
+    if (k.value.trim()) b[k.value.trim()] = v.value.trim();
+    st[bucket] = b; setState({ styles: st });
+    key = k.value.trim(); // keep the closure key current so the next edit replaces, not duplicates
+  };
+  // The swatch appears whenever the value parses as a CSS color (hex, rgb(), named…).
+  const syncSwatch = () => {
+    const t = v.value.trim();
+    const isColor = t !== '' && CSS.supports('color', t);
+    sw.hidden = !isColor;
+    if (isColor && /^#[0-9a-f]{6}$/i.test(t)) sw.value = t;
+  };
+  const refreshLint = () => {
+    lint.innerHTML = '';
+    const problems = lintVarName(k.value.trim());
+    lint.hidden = !problems.length;
+    problems.forEach(p => {
+      const m = el('span', 'lint-msg'); m.textContent = p.msg; lint.appendChild(m);
+      if (p.fix) {
+        const f = el('button', 'lint-fix'); f.type = 'button'; f.textContent = p.fix.label;
+        f.addEventListener('click', () => { k.value = p.fix.value; commit(); refreshLint(); });
+        lint.appendChild(f);
+      }
+    });
+  };
+  sw.addEventListener('input', () => { v.value = sw.value; });
+  sw.addEventListener('change', () => { commit(); syncSwatch(); });
+  k.addEventListener('change', () => { commit(); refreshLint(); });
+  v.addEventListener('change', () => { commit(); syncSwatch(); });
   x.addEventListener('click', () => { const st = { ...getState().styles }; const b = { ...st[bucket] }; delete b[key]; st[bucket] = b; setState({ styles: st }); renderInspector(); });
-  r.append(k, v, x); return r;
+  r.append(k, v, sw, x);
+  wrap.append(r, lint);
+  syncSwatch(); refreshLint();
+  return wrap;
 }
-function ruleRow(sel, decls) {
+// Text-override row (customizations.content.strings / stringIDs) — plain key→value; no swatch/lint.
+// Turn ThoughtSpot exposed-translation labels into { id, text } pairs. With exposeTranslationIDs on,
+// each label renders as <visibleText[stringID]> (some builds wrap the markers as "|| text [stringID] ||").
+// We only need the token inside [ ]; the preceding visible text is captured so the replacement can be
+// seeded with the original wording. Deduped, order-preserving. IDs are dotted/kebab identifiers.
+function parseExposedLabels(raw) {
+  const out = [], seen = new Set();
+  if (typeof raw !== 'string') return out;
+  const re = /([^\[\]<>|]*?)\s*\[([A-Za-z0-9_][\w.\-]*)\]/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const id = m[2].trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, text: m[1].replace(/[<>|]/g, '').trim() });
+  }
+  return out;
+}
+// If a whole exposed label is pasted into a string-ID field, keep just the [stringID] token.
+function extractStringId(raw) {
+  const pairs = parseExposedLabels(raw);
+  return pairs.length ? pairs[0].id : String(raw ?? '').trim();
+}
+function strRow(key, val, bucket, kPlaceholder, vPlaceholder) {
+  const wrap = el('div', 'sty-row');
   const r = el('div', 'frow');
-  const s = el('input', 'inp inp-sm'); s.placeholder = '[data-testid="share-button"]'; s.value = sel;
-  const d = el('input', 'inp inp-sm'); d.placeholder = 'display: none !important'; d.value = Object.entries(decls).map(([p, v]) => `${p}: ${v}`).join('; ');
+  const k = el('input', 'inp inp-sm'); k.placeholder = kPlaceholder; k.value = key;
+  const v = el('input', 'inp inp-sm'); v.placeholder = vPlaceholder; v.value = val;
   const x = el('button', 'frow-x', '✕');
   const commit = () => {
+    const st = { ...getState().styles }; const b = { ...st[bucket] }; delete b[key];
+    // stringIDs: paste a full "…[stringID]…" label and we keep just the ID (strings stays literal).
+    const newKey = bucket === 'stringIDs' ? extractStringId(k.value) : k.value.trim();
+    if (newKey !== k.value) k.value = newKey; // reflect the cleaned ID back into the field
+    if (newKey) b[newKey] = v.value.trim();
+    st[bucket] = b; setState({ styles: st });
+    key = newKey; // keep the closure key current so the next edit replaces, not duplicates
+  };
+  k.addEventListener('change', commit);
+  v.addEventListener('change', commit);
+  x.addEventListener('click', () => { const st = { ...getState().styles }; const b = { ...st[bucket] }; delete b[key]; st[bucket] = b; setState({ styles: st }); renderInspector(); });
+  r.append(k, v, x);
+  wrap.append(r);
+  return wrap;
+}
+function ruleRow(sel, decls) {
+  const wrap = el('div', 'sty-row');
+  const r = el('div', 'frow');
+  const s = el('input', 'inp inp-sm'); s.placeholder = '[data-testid="share-button"]'; s.value = sel;
+  const d = el('input', 'inp inp-sm'); d.placeholder = 'display: none !important'; d.value = declsToText(decls);
+  const x = el('button', 'frow-x', '✕');
+  const lint = el('div', 'lint-row'); lint.hidden = true;
+  const commit = () => {
     const st = { ...getState().styles }; const rules = { ...st.rules }; delete rules[sel];
-    if (s.value.trim()) {
-      const obj = {}; d.value.split(';').forEach(p => { const i = p.indexOf(':'); if (i > 0) obj[p.slice(0, i).trim()] = p.slice(i + 1).trim(); });
-      rules[s.value.trim()] = obj;
-    }
+    // declsFromText splits on top-level ';'/':' only — url(data:image/png;base64,…) and
+    // content: ";" survive intact (the old naive split corrupted them).
+    if (s.value.trim()) rules[s.value.trim()] = declsFromText(d.value);
     st.rules = rules; setState({ styles: st });
+    sel = s.value.trim(); // keep the closure key current so the next edit replaces, not duplicates
+    refreshLint();
+  };
+  const refreshLint = () => {
+    lint.innerHTML = '';
+    const problems = [];
+    const selVal = s.value.trim();
+    const selOk = !selVal || validSelector(selVal);
+    s.classList.toggle('inp--invalid', !selOk);
+    if (!selOk) problems.push({ msg: 'Selector does not parse — check the syntax.' });
+    else problems.push(...lintSelector(selVal));
+    const parsed = declsFromText(d.value);
+    const bad = Object.entries(parsed).filter(([p, v]) => !validDeclValue(p, v)).map(([p]) => p);
+    d.classList.toggle('inp--invalid', bad.length > 0);
+    if (bad.length) problems.push({ msg: `Not valid CSS (property or value): ${bad.join(', ')}` });
+    problems.push(...lintDecls(parsed));
+    lint.hidden = !problems.length;
+    problems.forEach(p => {
+      const m = el('span', 'lint-msg'); m.textContent = p.msg; lint.appendChild(m);
+      if (p.fix) {
+        const f = el('button', 'lint-fix'); f.type = 'button'; f.textContent = p.fix.label;
+        f.addEventListener('click', () => { p.fix.apply({ s, d }); commit(); });
+        lint.appendChild(f);
+      }
+    });
   };
   s.addEventListener('change', commit); d.addEventListener('change', commit);
   x.addEventListener('click', () => { const st = { ...getState().styles }; const rules = { ...st.rules }; delete rules[sel]; st.rules = rules; setState({ styles: st }); renderInspector(); });
-  r.append(s, d, x); return r;
+  r.append(s, d, x);
+  wrap.append(r, lint);
+  refreshLint();
+  return wrap;
 }
 // Pull style rules out of a parsed CSSRuleList into the { selector: { prop: 'value [!important]' } }
 // shape that rules_UNSTABLE expects. Only CSSStyleRule entries are kept (skips @media/@font-face/etc.).
@@ -2352,12 +2654,10 @@ function extractCssRules(cssRules) {
   const rules = {};
   for (const rule of cssRules) {
     if (!(rule instanceof CSSStyleRule)) continue;
-    const decls = {};
-    for (let i = 0; i < rule.style.length; i++) {
-      const prop = rule.style[i];
-      const val = rule.style.getPropertyValue(prop);
-      decls[prop] = rule.style.getPropertyPriority(prop) === 'important' ? `${val} !important` : val;
-    }
+    // Parse style.cssText (not the indexed longhands): it keeps shorthands as authored —
+    // `background: url(…) no-repeat` stays ONE declaration instead of exploding into nine
+    // longhands — and serializes !important inline where declsFromText preserves it.
+    const decls = declsFromText(rule.style.cssText);
     if (Object.keys(decls).length) rules[rule.selectorText] = { ...(rules[rule.selectorText] || {}), ...decls };
   }
   return rules;
@@ -2382,6 +2682,284 @@ function parseCssText(cssText) {
       return { rules: {}, error: e.message };
     }
   }
+}
+// Detect the SDK's own config shape (a `rules_UNSTABLE: { … }` object literal, or a bare
+// { selector: { prop: value } } map) so we route it to the JS parser instead of the CSS engine.
+// Signal: the rules_UNSTABLE key, or a nested object literal — a `{` that opens before the first
+// `}` — which a real CSS declaration block never contains (its next brace is always the close).
+function looksLikeRulesObject(raw) {
+  const t = raw.trim();
+  if (/\brules_UNSTABLE\b/.test(t)) return true;
+  const s = t.replace(/'[^']*'|"[^"]*"/g, ''); // ignore braces inside quoted selectors/values
+  const open = s.indexOf('{');
+  if (open === -1) return false;
+  const rest = s.slice(open + 1);
+  const nextOpen = rest.indexOf('{');
+  const nextClose = rest.indexOf('}');
+  return nextOpen !== -1 && (nextClose === -1 || nextOpen < nextClose);
+}
+// camelCase → kebab-case so pasted JS-style props (backgroundColor) match what the CSS path emits.
+// Custom properties (--ts-var-*) are left untouched.
+function cssProp(p) {
+  return p.startsWith('--') ? p : p.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+}
+// Recursively locate the rules_UNSTABLE map, so the full customizations wrapper works too.
+function findRulesUnstable(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj.rules_UNSTABLE && typeof obj.rules_UNSTABLE === 'object') return obj.rules_UNSTABLE;
+  for (const v of Object.values(obj)) { const f = findRulesUnstable(v); if (f) return f; }
+  return null;
+}
+// Parse a pasted object literal into the same { selector: { prop: 'value' } } shape parseCssText
+// returns. Evaluated as an expression (wrapped in parens) so single quotes, unquoted keys, and
+// trailing commas all work. When there's no rules_UNSTABLE key, the object IS the rules map.
+function parseRulesObject(raw) {
+  const t = raw.trim();
+  const expr = t.startsWith('{') ? `(${t})` : `({${t}})`;
+  let obj;
+  try { obj = new Function(`return ${expr};`)(); }
+  catch (e) { return { rules: {}, error: e.message }; }
+  if (!obj || typeof obj !== 'object') return { rules: {}, error: 'Not an object literal.' };
+  return { rules: normalizeRulesMap(findRulesUnstable(obj) || obj) };
+}
+// { selector: { prop: value } } map (from JSON or an eval'd literal) → the clean string-valued
+// shape rules_UNSTABLE expects. Skips non-object entries; camelCase props become kebab-case.
+function normalizeRulesMap(map) {
+  const rules = {};
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return rules;
+  for (const [sel, decls] of Object.entries(map)) {
+    if (!decls || typeof decls !== 'object' || Array.isArray(decls)) continue;
+    const clean = {};
+    for (const [p, v] of Object.entries(decls)) if (v != null && typeof v !== 'object') clean[cssProp(p)] = String(v);
+    if (Object.keys(clean).length) rules[sel] = clean;
+  }
+  return rules;
+}
+function normalizeVarsMap(vars) {
+  const out = {};
+  if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return out;
+  Object.entries(vars).forEach(([k, v]) => { if (v != null && typeof v !== 'object') out[k] = String(v); });
+  return out;
+}
+
+// ── Custom-styles intelligence: catalog, presets, parsing, linting ────────────
+
+// The documented --ts-var catalog (developers.thoughtspot.com → "CSS variables reference",
+// sample variables file). Powers autocomplete + typo suggestions. Note: the docs say this
+// covers the COMMON set for a release — an unlisted variable may still be valid.
+const TS_VAR_CATALOG = {
+  'Root & app': ['--ts-var-root-color', '--ts-var-root-background', '--ts-var-root-font-family', '--ts-var-root-text-transform', '--ts-var-root-secondary-color', '--ts-var-application-color'],
+  'Navigation': ['--ts-var-nav-color', '--ts-var-nav-background'],
+  'Buttons': ['--ts-var-button-border-radius', '--ts-var-button--icon-border-radius',
+    '--ts-var-button--primary-color', '--ts-var-button--primary-background', '--ts-var-button--primary--hover-background', '--ts-var-button--primary--font-family', '--ts-var-button--primary--active-background',
+    '--ts-var-button--secondary-color', '--ts-var-button--secondary-background', '--ts-var-button--secondary--hover-background', '--ts-var-button--secondary--font-family', '--ts-var-button--secondary--active-background',
+    '--ts-var-button--tertiary-color', '--ts-var-button--tertiary-background', '--ts-var-button--tertiary--hover-background', '--ts-var-button--tertiary--active-background'],
+  'Checkboxes': ['--ts-var-checkbox-error-border', '--ts-var-checkbox-border-color', '--ts-var-checkbox-hover-border', '--ts-var-checkbox-active-color', '--ts-var-checkbox-checked-color', '--ts-var-checkbox-checked-disabled', '--ts-var-checkbox-highlighted-hover-color', '--ts-var-checkbox-background-color'],
+  // "seperator" is the documented spelling — do not "fix" it.
+  'Menus': ['--ts-var-menu-color', '--ts-var-menu-background', '--ts-var-menu-font-family', '--ts-var-menu-text-transform', '--ts-var-menu--hover-background', '--ts-var-menu-seperator-background', '--ts-var-menu-selected-text-color'],
+  'Dialogs': ['--ts-var-dialog-body-background', '--ts-var-dialog-body-color', '--ts-var-dialog-header-background', '--ts-var-dialog-header-color', '--ts-var-dialog-footer-background'],
+  'Lists & controls': ['--ts-var-segment-control-hover-background', '--ts-var-list-selected-background', '--ts-var-list-hover-background'],
+  'Liveboard': ['--ts-var-liveboard-edit-bar-background', '--ts-var-liveboard-cross-filter-layout-background'],
+  'Visualizations': ['--ts-var-viz-title-color', '--ts-var-viz-title-font-family', '--ts-var-viz-title-text-transform', '--ts-var-viz-description-color', '--ts-var-viz-description-font-family', '--ts-var-viz-description-text-transform', '--ts-var-viz-border-radius', '--ts-var-viz-box-shadow', '--ts-var-viz-background', '--ts-var-viz-legend-hover-background'],
+  'Filter chips': ['--ts-var-chip-border-radius', '--ts-var-chip-title-font-family', '--ts-var-chip-box-shadow', '--ts-var-chip-background', '--ts-var-chip-color', '--ts-var-chip--hover-background', '--ts-var-chip--hover-color', '--ts-var-chip--active-background', '--ts-var-chip--active-color'],
+  'Axis': ['--ts-var-axis-title-color', '--ts-var-axis-title-font-family', '--ts-var-axis-data-label-color', '--ts-var-axis-data-label-font-family'],
+  'Answers': ['--ts-var-answer-chart-select-background', '--ts-var-answer-chart-hover-background', '--ts-var-answer-view-table-chart-switcher-active-background', '--ts-var-answer-view-table-chart-switcher-background', '--ts-var-answer-edit-panel-background-color', '--ts-var-answer-data-panel-background-color'],
+  'Spotter': ['--ts-var-spotter-input-background', '--ts-var-spotter-prompt-background'],
+  'Search': ['--ts-var-search-data-button-font-color', '--ts-var-search-data-button-background', '--ts-var-search-data-button-font-family', '--ts-var-search-bar-text-font-color', '--ts-var-search-bar-text-font-family', '--ts-var-search-bar-text-font-style', '--ts-var-search-bar-background', '--ts-var-search-auto-complete-background', '--ts-var-search-auto-complete-font-color', '--ts-var-search-auto-complete-subtext-font-color', '--ts-var-search-navigation-button-background', '--ts-var-search-bar-navigation-help-text-background', '--ts-var-search-bar-auto-complete-hover-background'],
+  'Homepage': ['--ts-var-home-watchlist-selected-text-color', '--ts-var-home-card-color', '--ts-var-home-favorite-suggestion-card-text-color', '--ts-var-home-favorite-suggestion-card-text-font-color', '--ts-var-home-favorite-suggestion-card-background', '--ts-var-home-favorite-suggestion-card-icon-color'],
+  'Sage / NL search': ['--ts-var-sage-bar-header-background-color', '--ts-var-source-selector-background-color', '--ts-var-sage-search-box-font-color', '--ts-var-sage-search-box-background-color', '--ts-var-sage-embed-background-color', '--ts-var-sage-seed-questions-background', '--ts-var-sage-seed-questions-font-color', '--ts-var-sage-seed-questions-hover-background', '--ts-var-source-selector-hover-color'],
+};
+const TS_VAR_ALL = Object.values(TS_VAR_CATALOG).flat();
+
+function attrSel(attr, val) { return `[${attr}="${String(val).replace(/"/g, '\\"')}"]`; }
+
+// A class ending in a hash-ish suffix (letters+digits, ≥4 chars, contains a digit) after a
+// separator — e.g. answerActionsCompact-x7f3z — is minifier output; only the stem survives
+// releases. css-modules names (divider-module__includeSectionBorder) have no digit → kept as-is.
+function hashedClassInfo(cls) {
+  if (/^css-[a-z0-9]+$/i.test(cls)) return null; // emotion/styled-components — no stable stem at all
+  const m = cls.match(/^([A-Za-z][A-Za-z-]{3,}?)[-_]{1,2}((?=[A-Za-z\d]*\d)[A-Za-z\d]{4,})$/);
+  return m ? { stem: m[1] } : null;
+}
+
+// Walk the pasted element AND its descendants, harvesting every plausible hook, ranked by
+// stability: data-testid > aria-label > id > class. Hash-suffixed classes become
+// [class*="stem"] substring matches so they survive TS release re-hashing.
+function collectSelectorCandidates(root) {
+  const cands = []; const seen = new Set();
+  const nodes = [root, ...root.querySelectorAll('*')].slice(0, 300);
+  nodes.forEach(node => {
+    const isRoot = node === root;
+    const add = (selector, score, why, tier) => {
+      if (!selector || seen.has(selector)) return;
+      seen.add(selector);
+      cands.push({ selector, score: score + (isRoot ? 15 : 0), tag: node.tagName.toLowerCase(), why, tier, isRoot });
+    };
+    if (node.dataset?.testid) add(attrSel('data-testid', node.dataset.testid), 100, 'A test id — the most reliable hook. Survives ThoughtSpot updates.', 'best');
+    const aria = node.getAttribute('aria-label');
+    if (aria) add(attrSel('aria-label', aria), 85, 'An accessibility label — stable, but changes if the UI language changes.', 'good');
+    if (node.id && !/^\d|\d{3,}/.test(node.id)) add(`#${node.id}`, 80, 'The element id — usually stable across updates.', 'good');
+    [...(node.classList || [])].forEach(cls => {
+      const h = hashedClassInfo(cls);
+      if (h) add(`[class*="${h.stem}"]`, 70, `Matches the stable part of “${cls}” — survives ThoughtSpot renaming that class.`, 'ok');
+      else if (!/^css-/.test(cls)) add(`.${cls}`, 55, 'A plain CSS class — may break when ThoughtSpot updates.', 'weak');
+    });
+  });
+  return cands.sort((a, b) => b.score - a.score).slice(0, 8);
+}
+
+// Split "a: b; c: url(data:image/png;base64,x)" on TOP-LEVEL semicolons only (quotes and
+// parens protect their contents), then each part on its first top-level colon.
+function splitDecls(text) {
+  const parts = []; let cur = '', depth = 0, quote = null;
+  for (const ch of String(text)) {
+    if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === ';' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts.map(p => {
+    let i = -1, d2 = 0, q2 = null;
+    for (let j = 0; j < p.length; j++) {
+      const ch = p[j];
+      if (q2) { if (ch === q2) q2 = null; continue; }
+      if (ch === '"' || ch === "'") { q2 = ch; continue; }
+      if (ch === '(') d2++;
+      else if (ch === ')') d2 = Math.max(0, d2 - 1);
+      else if (ch === ':' && d2 === 0) { i = j; break; }
+    }
+    if (i <= 0) return null;
+    const prop = p.slice(0, i).trim(), val = p.slice(i + 1).trim();
+    return prop && val ? [prop, val] : null;
+  }).filter(Boolean);
+}
+function declsFromText(text) { const o = {}; splitDecls(text).forEach(([p, v]) => { o[p] = v; }); return o; }
+function declsToText(decls) { return Object.entries(decls || {}).map(([p, v]) => `${p}: ${v}`).join('; '); }
+
+function validSelector(sel) {
+  if (!sel) return false;
+  try { document.querySelector(sel); return true; } catch { return false; }
+}
+// CSS.supports validates prop+value exactly as this browser's engine will (the iframe runs the
+// same engine). Custom properties are always valid; '!important' must be stripped first.
+function validDeclValue(prop, val) {
+  if (prop.startsWith('--')) return true;
+  try { return CSS.supports(prop, String(val).replace(/\s*!important\s*$/i, '')); } catch { return false; }
+}
+
+function lintSelector(sel) {
+  if (!sel) return [];
+  const out = [];
+  if (/\.css-[a-z0-9]+/i.test(sel)) out.push({ msg: '.css-* classes are build-generated — they change on every TS release. Prefer [data-testid], [aria-label], or a [class*="stem"] match.' });
+  (sel.match(/\.([A-Za-z][\w-]{3,})/g) || []).forEach(tok => {
+    const cls = tok.slice(1);
+    const h = hashedClassInfo(cls);
+    if (h) out.push({
+      msg: `.${cls} looks hash-suffixed — fragile across releases.`,
+      fix: { label: `Use [class*="${h.stem}"]`, apply: ({ s }) => { s.value = s.value.replace(tok, `[class*="${h.stem}"]`); } },
+    });
+  });
+  if (/:nth-(child|of-type)/.test(sel)) out.push({ msg: ':nth-* is order-dependent — breaks if ThoughtSpot reorders elements.' });
+  return out;
+}
+
+// TS's own styles usually win inside the iframe; the official rules_UNSTABLE docs put
+// !important on every value. Advise (with a one-click fix) when any declaration lacks it.
+function lintDecls(decls) {
+  const missing = Object.entries(decls).filter(([, v]) => v && !/!important\s*$/i.test(v)).map(([p]) => p);
+  if (!missing.length) return [];
+  const fixed = {};
+  Object.entries(decls).forEach(([p, v]) => { fixed[p] = /!important\s*$/i.test(v) ? v : `${v} !important`; });
+  return [{
+    msg: `Missing !important (TS's own styles usually win without it): ${missing.join(', ')}.`,
+    fix: { label: '+ !important on all', apply: ({ d }) => { d.value = declsToText(fixed); } },
+  }];
+}
+
+function lintVarName(name) {
+  if (!name) return [];
+  if (!name.startsWith('--')) {
+    return [{ msg: 'Custom properties must start with "--".', ...(name.startsWith('ts-var') && { fix: { label: `Use --${name}`, value: `--${name}` } }) }];
+  }
+  if (name.startsWith('--ts-var') && !TS_VAR_ALL.includes(name)) {
+    const near = suggestVar(name);
+    return [{
+      msg: 'Not in the documented --ts-var catalog (may still work — the list covers the common set).',
+      ...(near && near !== name && { fix: { label: `Did you mean ${near}?`, value: near } }),
+    }];
+  }
+  return [];
+}
+
+function levDist(a, b) { // O(len²) is fine — the catalog is ~100 short names
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+function suggestVar(name) {
+  let best = null, bestD = Infinity;
+  TS_VAR_ALL.forEach(v => { const dist = levDist(name, v); if (dist < bestD) { bestD = dist; best = v; } });
+  return bestD <= 6 ? best : null;
+}
+
+// Pasting a full theme stylesheet (like TS's sample css-variables.css) should land the
+// `:root { --ts-var-…: … }` custom properties in the VARIABLES bucket, not as a rule.
+function splitRootVariables(rules) {
+  const vars = {}, rest = {};
+  Object.entries(rules).forEach(([sel, decls]) => {
+    if (/^(:root|html|body)$/i.test(sel.trim())) {
+      const keep = {};
+      Object.entries(decls).forEach(([p, v]) => { if (p.startsWith('--')) vars[p] = v; else keep[p] = v; });
+      if (Object.keys(keep).length) rest[sel] = keep;
+    } else rest[sel] = decls;
+  });
+  return { vars, rest };
+}
+
+// Auto-detect what got pasted into the smart box:
+//   leading '<'                      → element HTML   → ranked selector candidates
+//   JSON with variables/rules/cssUrl → styles-JSON import (the ⧉ Copy styles JSON shape)
+//   JSON / JS object literal         → rules_UNSTABLE object
+//   anything else                    → CSS text (via the browser's own CSS engine)
+function detectPaste(raw) {
+  const t = raw.trim();
+  if (t.startsWith('<')) {
+    const doc = new DOMParser().parseFromString(t, 'text/html');
+    const root = doc.body.firstElementChild;
+    if (!root) return { kind: 'html', error: 'could not parse — paste the full element from DevTools' };
+    return { kind: 'html', candidates: collectSelectorCandidates(root) };
+  }
+  try {
+    const j = JSON.parse(t);
+    if (j && typeof j === 'object' && !Array.isArray(j)) {
+      if (j.variables || j.rules || j.cssUrl) {
+        return {
+          kind: 'import',
+          vars: normalizeVarsMap(j.variables),
+          rules: normalizeRulesMap(j.rules || {}),
+          cssUrl: typeof j.cssUrl === 'string' && /^https?:\/\//.test(j.cssUrl) ? j.cssUrl : '',
+        };
+      }
+      return { kind: 'rules', rules: normalizeRulesMap(findRulesUnstable(j) || j) };
+    }
+  } catch (_) { /* not JSON — fall through */ }
+  if (looksLikeRulesObject(t)) {
+    const r = parseRulesObject(t);
+    return { kind: 'rules', rules: r.rules, error: r.error };
+  }
+  const { rules, error } = parseCssText(t);
+  if (error) return { kind: 'css', error };
+  const { vars, rest } = splitRootVariables(rules);
+  return { kind: 'css', rules: rest, vars };
 }
 
 // ═══ CUSTOM LIVEBOARD — website-native filter bar ════════════════════════════
@@ -3634,15 +4212,33 @@ function generateCode() {
     initLines.push('  // identity from a verified server session (SSO/cookie), never from the request body.');
     initLines.push('  getAuthToken: () => fetch(\'/api/auth/token\', { method: \'POST\' }).then(r => r.json()).then(d => d.token),');
   }
-  if (hasStyles(s)) {
-    initLines.push('  customizations: { style: { customCSS: {');
-    if (Object.keys(s.styles.variables).length) { initLines.push('    variables: {'); Object.entries(s.styles.variables).forEach(([k, v]) => initLines.push(`      '${esc(k)}': '${esc(v)}',`)); initLines.push('    },'); }
-    if (Object.keys(s.styles.rules).length) {
-      initLines.push('    rules_UNSTABLE: {');
-      Object.entries(s.styles.rules).forEach(([sel, decls]) => { initLines.push(`      '${esc(sel)}': {`); Object.entries(decls).forEach(([p, v]) => initLines.push(`        '${esc(p)}': '${esc(v)}',`)); initLines.push('      },'); });
+  if (hasStyles(s) || hasContent(s)) {
+    initLines.push('  customizations: {');
+    if (hasStyles(s)) {
+      initLines.push('    style: {');
+      // customCSSUrl loads first; inline customCSS overrides it. The URL host must be allowed
+      // in the instance's CSP style-src (Develop → Security settings).
+      if (s.styles.cssUrl) initLines.push(`      customCSSUrl: '${esc(s.styles.cssUrl)}', // host must be allowlisted in TS CSP style-src`);
+      if (Object.keys(s.styles.variables).length || Object.keys(s.styles.rules).length) {
+        initLines.push('      customCSS: {');
+        if (Object.keys(s.styles.variables).length) { initLines.push('        variables: {'); Object.entries(s.styles.variables).forEach(([k, v]) => initLines.push(`          '${esc(k)}': '${esc(v)}',`)); initLines.push('        },'); }
+        if (Object.keys(s.styles.rules).length) {
+          initLines.push('        rules_UNSTABLE: {');
+          Object.entries(s.styles.rules).forEach(([sel, decls]) => { initLines.push(`          '${esc(sel)}': {`); Object.entries(decls).forEach(([p, v]) => initLines.push(`            '${esc(p)}': '${esc(v)}',`)); initLines.push('          },'); });
+          initLines.push('        },');
+        }
+        initLines.push('      },');
+      }
       initLines.push('    },');
     }
-    initLines.push('  } } },');
+    if (hasContent(s)) {
+      // content.* relabels on-screen UI text only — server-rendered exports (CSV/XLSX/PDF) are unaffected.
+      initLines.push('    content: { // Beta: UI-text relabels (system text only; not exports)');
+      if (Object.keys(s.styles.strings).length) { initLines.push('      strings: { // literal, case-sensitive, replaces every occurrence'); Object.entries(s.styles.strings).forEach(([k, v]) => initLines.push(`        '${esc(k)}': '${esc(v)}',`)); initLines.push('      },'); }
+      if (Object.keys(s.styles.stringIDs).length) { initLines.push('      stringIDs: { // precise per-ID overrides; win over strings on conflict'); Object.entries(s.styles.stringIDs).forEach(([k, v]) => initLines.push(`        '${esc(k)}': '${esc(v)}',`)); initLines.push('      },'); }
+      initLines.push('    },');
+    }
+    initLines.push('  },');
   }
   L.push(`init({\n${initLines.join('\n')}\n});`);
   L.push('');
@@ -3676,6 +4272,7 @@ function generateCode() {
     opt.push('  ],');
   }
   if (s.runtimeParameters.length) { opt.push('  runtimeParameters: ['); s.runtimeParameters.forEach(p => opt.push(`    { name: '${esc(p.name)}', value: '${esc(p.value)}' },`)); opt.push('  ],'); }
+  if (s.styles.exposeIds) opt.push('  exposeTranslationIDs: true, // debug: renders every label as <string[stringID]> to discover IDs — remove in production');
 
   // `let` when Personal liveboards is on so switchBoard() can reassign `embed` on a tab click.
   L.push(`${plbOn ? 'let' : 'const'} embed = new ${embedCls}('#ts-embed-container', {\n${opt.join('\n')}\n});`);

@@ -89,7 +89,7 @@ export function defaultState() {
       activeCopyId: '',               // '' = the Standard board (tab #1); else a copy's liveboardId
       copies: {},                     // { [sourceLiveboardId]: [{ id, title }] }
     },
-    styles: { variables: {}, rules: {} },
+    styles: { variables: {}, rules: {}, cssUrl: '', strings: {}, stringIDs: {}, exposeIds: false }, // cssUrl → customizations.style.customCSSUrl; strings/stringIDs/exposeIds → customizations.content (Beta)
     // trusted-auth claims (NON-secret) — the token-claims playground
     auth: {
       username: '',
@@ -333,6 +333,10 @@ function sanitize(raw) {
   if (has('styles')) out.styles = {
     variables: cleanMap(raw.styles?.variables, v => str(v, 512)),
     rules: cleanMap(raw.styles?.rules, decls => cleanMap(decls, v => str(v, 512))),
+    cssUrl: validHost(raw.styles?.cssUrl), // http(s) only — blocks javascript:/data: from shared links
+    strings: cleanMap(raw.styles?.strings, v => str(v, 512)),     // customizations.content.strings (literal UI-text swaps)
+    stringIDs: cleanMap(raw.styles?.stringIDs, v => str(v, 512)), // customizations.content.stringIDs (ID-based swaps)
+    exposeIds: !!raw.styles?.exposeIds,                           // customizations.content.exposeTranslationIDs (ID discovery)
   };
 
   if (has('auth')) out.auth = sanitizeAuth(raw.auth);
@@ -370,7 +374,7 @@ export function loadState(seed = {}) {
 function mergeKnown(base, loaded) {
   const out = { ...base, ...loaded };
   out.auth = { ...base.auth, ...(loaded.auth || {}) };
-  out.styles = { variables: {}, rules: {}, ...(loaded.styles || {}) };
+  out.styles = { variables: {}, rules: {}, cssUrl: '', strings: {}, stringIDs: {}, exposeIds: false, ...(loaded.styles || {}) };
   out.flags = { ...(loaded.flags || {}) };
   out.exportOpts = { ...base.exportOpts, ...(loaded.exportOpts || {}) };
   out.dateBtn = { ...base.dateBtn, ...(loaded.dateBtn || {}) };
@@ -384,6 +388,9 @@ export function resetState({ keepConnection = true } = {}) {
   if (keepConnection) {
     fresh.host = state.host;
     fresh.authType = state.authType;
+    // Stay on the current embed/menu — Reset clears applied options, it is not
+    // a navigation action, so it must not snap the view back to SearchEmbed.
+    fresh.section = state.section;
     fresh.worksheetId = state.worksheetId;
     fresh.liveboardId = state.liveboardId;
     fresh.vizId = state.vizId;
