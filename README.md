@@ -173,7 +173,8 @@ Two host-side patterns ship wired up, each with a full write-up in [`docs/`](doc
 | `npm run dev` | Same, with auto-restart on file changes |
 | `npm run setup` | Create `.env` from the template (Trusted Auth) |
 | `npm run doctor` | Verify Trusted Auth: check `.env`, reach the instance, mint a test token |
-| `npm test` | Boot the server and assert the security guards + static restrictions |
+| `npm test` | Boot the server and assert the security guards + static restrictions (**the security gate**) |
+| `npm run boot-check` | Boot the app in headless Chrome and fail on any JS error or non-favicon 4xx (**the frontend gate**) |
 | `npm run vendor-sdk` | Download a pinned copy of the SDK into `vendor/` to self-host it |
 
 ---
@@ -232,3 +233,115 @@ scripts/          setup.mjs · smoke-test.mjs (npm test) · vendor-sdk.mjs (self
 docs/             Deep-dive guides: callback-action.md (host-code buttons) · customize-export.md (REST Report API export).
 misc/             Archived/unused material (old "Vantage Sales" app, repro bundles, snake game). Gitignored.
 ```
+
+---
+
+## How this project is maintained — the agent org
+
+This repo is maintained by a small **organization of AI agents** (Claude Code sessions) running a
+continuous-improvement loop. The design is deliberate: stateless agents share one durable,
+in-repo brain, so any session — local, worktree, or the weekly cloud routine — picks up the work
+and behaves like the same team. The brain has three stores:
+
+| Store | Holds | Changed by |
+|---|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | **Rules** — the constitution, critical invariants | Human-approved PRs only (guard-protected) |
+| [`BACKLOG.md`](BACKLOG.md) | **Tasks** — the prioritized work queue | Every cycle (Status/notes/new rows only) |
+| [`docs/org-memory/`](docs/org-memory/) | **Facts** — verified findings, traps, and the retro log | Every cycle, at the Records step |
+
+Every agent reads the org memory before working and reports **memory-worthy facts** back; the
+cycle persists them in the same PR as the work — so knowledge earned once is never re-derived.
+
+**Three standing goals, in priority order:**
+1. **Improve the app** — the `S`/`R` backlog items (stability, features, refactors).
+2. **Keep it current** — the `W` items: track ThoughtSpot SDK/doc drift.
+3. **Improve the org itself** — the `M` items: sharpen the skills, playbooks, and gates.
+
+### The improvement cycle
+
+The **CEO is an orchestrator, not a department**: it picks the work, dispatches the department
+agents — **in parallel wherever they have no data dependency** — judges their findings, and
+ships. One run of [`/ceo-improve-cycle`](.claude/skills/ceo-improve-cycle/SKILL.md) takes the top
+open backlog item through every department and ships one verified PR:
+
+```mermaid
+flowchart TD
+    B["BACKLOG.md<br/>— the work queue"] --> CEO{{"CEO session<br/>/ceo-improve-cycle<br/>orchestrates, never builds"}}
+    MEM[("docs/org-memory/<br/>shared memory")] -.->|"read before work"| CEO
+    CEO -->|"picks top open item"| R["Research · researcher<br/>maps code, flags risks"]
+    R -->|"brief"| A["Engineering / design · architect<br/>ordered implementation plan"]
+    A -->|"plan"| I["Engineering / build · implementer<br/>edits on a branch"]
+    I -->|"diff"| RB["Review Board · reviewer ×lens ∥ /code-review<br/>tries to REFUTE the diff"]
+    I -->|"diff"| QA["QA · qa-verifier<br/>npm test · boot-check · feature check"]
+    RB -->|"clean"| REC["Records<br/>BACKLOG status + memory-worthy facts"]
+    QA -->|"all gates green"| REC
+    REC -.->|"persist facts + retro"| MEM
+    REC --> OPS["Operations<br/>push · open PR with evidence"]
+    OPS --> CI{"CI gates<br/>smoke · esm-parse · guard"}
+    CI -->|"green · no confirmed bug · guard clean"| MERGE[["Squash-merge to main"]]
+    MERGE --> PROD(["Vercel deploy = production release"])
+    CI -->|"guard red = protected path touched"| HUMAN["Stop — needs the human-approved label"]
+```
+
+Review Board and QA read the same diff **concurrently** (the reviewer lenses each run as their own
+parallel agent); when `/ceo-improve-cycle N` picks independent items, their build→QA phases run in
+**parallel git worktrees**, one branch and PR per item.
+
+Each department is a **named agent** in [`.claude/agents/`](.claude/agents/), dispatched by the CEO
+with a read-only or build-scoped toolset:
+
+| Department | Agent | Role |
+|---|---|---|
+| Research & Intelligence | `researcher` | Maps the exact files, functions, and call sites the item touches; surfaces reusable helpers and risks. **Read-only.** |
+| Engineering — design | `architect` | Turns the brief into a concrete, ordered implementation plan. **Read-only.** |
+| Engineering — build | `implementer` | Executes the plan on a branch (worktree-isolated for parallel work) and runs the gates. |
+| Review Board | `reviewer` + `/code-review` | Adversarial: tries to **refute** the diff — one parallel agent per lens (correctness / security / regression). |
+| Discovery | `bug-hunter` | Hunts an assigned area for **new** bugs, one parallel hunter per lens; every finding needs a concrete failure scenario. |
+| QA | `qa-verifier` | Runs the full verification bar — `npm test`, `npm run boot-check`, ESM parse — plus a feature-specific check. |
+| Operations | `gh`, `/schedule`, `/loop` | Opens the PR with an evidence section, watches CI, and merges only when every gate is green. |
+
+### Bug hunting — the org restocks its own queue
+
+`/ceo-improve-cycle discover` fans out parallel `bug-hunter` agents over a chosen hunting ground,
+dedupes and re-verifies their findings, and files the survivors as backlog rows.
+`/ceo-improve-cycle discover fix` then chains straight into fixing them — each confirmed finding
+gets its own research→build→review→QA cycle and its own PR (parallel worktrees when the fixes
+don't overlap). Finding and fixing never share a diff, so every PR stays small and reviewable.
+
+### Guardrails — what keeps autonomous agents safe
+
+- **Every change is a branch + PR** with a verification-evidence section — never a direct commit to `main`.
+- **Merging `main` deploys to production via Vercel** — every merge is treated as a release.
+- **CI gates** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): `smoke` (security guards),
+  `esm-parse` (every module parses as a browser ES module), and `guard` (protected paths) are
+  **required**; `boot` (headless frontend) is advisory until it proves stable.
+- **Protected paths are mechanically enforced.** Any PR touching `server.js`, `js/state.js`,
+  `scripts/smoke-test.mjs`, `.env*`, `.github/workflows/*`, or `CLAUDE.md` fails the `guard` job
+  until a **human** adds the `human-approved` label. Agents may never add that label, never
+  `--admin`-merge, and never weaken the guard.
+- **A PR auto-merges only when** every required check is green **and** review found no confirmed
+  correctness bug **and** the `guard` check passed without needing a human label.
+
+### Two operating loops
+
+```mermaid
+flowchart LR
+    subgraph L1["Interactive loop — you drive"]
+        U["Human CEO"] -->|"/ceo-improve-cycle"| CY["one cycle → one PR"]
+    end
+    subgraph L2["Automated loop — weekly, in the cloud"]
+        CRON["Scheduled routine"] -->|"/ts-watch"| DRIFT["detect SDK / doc drift"]
+        DRIFT --> PR2["opens ONE PR<br/>never merges"]
+    end
+    CY --> GATE["Branch + PR + CI gates"]
+    PR2 --> GATE
+    GATE -->|"clean + no protected path"| AUTO[["auto-merge<br/>= production release"]]
+    GATE -->|"guard red · ts-watch PR"| HUM["Human reviews & merges"]
+```
+
+The **interactive** loop is you, the human CEO, running `/ceo-improve-cycle`. The **automated** loop
+is a weekly cloud routine that runs [`/ts-watch`](.claude/skills/ts-watch/SKILL.md) to catch
+ThoughtSpot SDK/doc drift — it opens exactly one reviewable PR and **never merges**. Both converge
+on the same branch → PR → CI gates. A cycle PR that is fully green and touches no protected path
+**auto-merges — and every merge is a production release**; ts-watch PRs and anything the `guard`
+job flags always wait for a human.
