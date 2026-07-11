@@ -76,14 +76,24 @@ CI (`.github/workflows/ci.yml`) runs the same three plus a `guard` job (protecte
    When a cycle exposes a process failure (a gate that missed something, an ambiguous rule, a
    duplicated effort), file an M item in `BACKLOG.md` — the org must get better at getting better.
 
-**The CEO is the interactive driving session ONLY.** The weekly ts-watch cloud routine is NOT a
+**The CEO is the interactive driving session ONLY, and it orchestrates — it dispatches the
+departments and does not do department work itself.** Agents with no data dependency run **in
+parallel**: Review Board lenses, discovery hunters, Review Board ∥ QA on the same diff, and
+worktree-isolated implementers for independent items. The weekly ts-watch cloud routine is NOT a
 CEO: it runs the `/ts-watch` playbook, opens one PR, and stops — it never runs `/ceo-improve-cycle`
 and **never merges anything**. Departments = the named agents in `.claude/agents/` (fall back to
 built-ins only if unavailable, e.g. a fresh clone): Research (`researcher`; fallback `Explore`),
 Engineering (`architect` + worktree-isolated `implementer`s; fallbacks `Plan`/`general-purpose`),
-Review Board (`reviewer` per lens + `/code-review`, `/security-review`), QA (`qa-verifier` running
-`npm test` + `npm run boot-check` + CI), Operations (`/schedule`, `/loop`, `gh` merge).
-The cycle is codified in `/ceo-improve-cycle` (incl. `discover` bug-hunt mode + per-cycle micro-retro).
+Review Board (`reviewer` per lens + `/code-review`, `/security-review`), Discovery (`bug-hunter`
+per lens; fallback `reviewer`), QA (`qa-verifier` running `npm test` + `npm run boot-check` + CI),
+Operations (`/schedule`, `/loop`, `gh` merge). The cycle is codified in `/ceo-improve-cycle`
+(incl. the `discover` / `discover fix` bug-hunt modes + per-cycle micro-retro).
+
+**Shared memory.** `docs/org-memory/` is the org's third durable store: rules live here in the
+constitution, tasks in `BACKLOG.md`, discovered **facts** in `docs/org-memory/codebase.md` and the
+retro log in `docs/org-memory/retros.md`. Every agent reads the memory before working and reports
+memory-worthy facts back; the cycle persists them at the Records step, in the same PR as the work
+that earned them. Facts that harden into rules get promoted into this file via a guard-protected PR.
 
 **Every change is a branch + PR** with a verification-evidence section. **Merging `main` deploys
 to PRODUCTION via Vercel — treat every merge as a release.** A PR auto-merges only when ALL hold:
