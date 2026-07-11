@@ -114,6 +114,101 @@ async function runXssProbe(browser) {
   }
 }
 
+// Confirm-host / persistence probe (BACKLOG S2): a host arriving via the attacker-controllable
+// #s= share hash must (1) require an explicit Connect click — shown as the "confirm-host" overlay,
+// never auto-connected — and (2) be kept OUT of localStorage while unconfirmed, so a later PLAIN
+// visit (no hash) can't silently auto-connect to it. The guard lives at state.js `holdHostPersist`
+// (schedulePersist blanks the held host from localStorage) + app.js `pendingHostConfirm`.
+//
+// Two legs, both on the SAME browser (localStorage is shared per-origin across pages):
+//   Leg 1 — open `#s={host:EVIL, worksheetId:MARKER}`. Assert the confirm overlay names EVIL
+//           (positive control: the hash reached the app), the debounced persist wrote state with
+//           host BLANKED but the MARKER kept (proves a write happened, so the guard is meaningful),
+//           the status pill never reached connecting/connected, and NO request went to EVIL.
+//   Leg 2 — open the bare URL (no hash). It inherits Leg 1's localStorage. Assert it reads that
+//           storage (MARKER present → propagation confirmed) with host still '', shows the
+//           "not-connected" overlay (NOT confirm-host), never connects, and never contacts EVIL.
+// A regression that persists the hash host, or auto-connects to it, flips one of these to fail.
+async function runHostConfirmProbe(browser) {
+  const EVIL = 'https://evil.s2probe.example';
+  const MARKER = 'ws_s2probe_marker';
+  const KEY = 'tsp_state_v1';
+  const hash = Buffer.from(JSON.stringify({ host: EVIL, worksheetId: MARKER }), 'utf8').toString('base64url');
+  const touchedEvil = (r) => r.url().includes('evil.s2probe.example');
+  // Mirror state.js decode(): base64url → UTF-8 bytes → JSON. Returns null if storage is absent.
+  const readStored = (k) => {
+    const s = localStorage.getItem(k);
+    if (!s) return null;
+    try {
+      const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+      const bin = atob(b64.padEnd(b64.length + (4 - b64.length % 4) % 4, '='));
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch { return { host: 'DECODE_ERROR' }; }
+  };
+
+  // ── Leg 1: hash-sourced host → confirm overlay, blanked in storage, no contact ──
+  const p1 = await browser.newPage();
+  const evilUrls1 = [];
+  p1.on('request', (r) => { if (touchedEvil(r)) evilUrls1.push(r.url()); });
+  let confirmShown, p1Stored, p1Status;
+  try {
+    await p1.goto(`${BASE}/#s=${hash}`, { waitUntil: 'networkidle2', timeout: 30_000 });
+    // Positive control: the hash host must surface as a pending confirmation naming EVIL.
+    confirmShown = await p1.waitForFunction((evil) => {
+      const active = document.querySelector('.st-confirm-host.active');
+      const name = document.getElementById('confirm-host-name')?.textContent || '';
+      return !!active && name.includes(evil);
+    }, { polling: 300, timeout: 20_000 }, EVIL).then(() => true, () => false);
+    await sleep(600); // let the 250ms debounced persist fire
+    p1Stored = await p1.evaluate(readStored, KEY);
+    p1Status = await p1.evaluate(() => document.getElementById('conn-status')?.dataset.state || '');
+  } finally {
+    await p1.close();
+  }
+  // ── Leg 2: plain revisit (no hash) inherits Leg 1's storage → not-connected, no auto-connect ──
+  const p2 = await browser.newPage();
+  const evilUrls2 = [];
+  p2.on('request', (r) => { if (touchedEvil(r)) evilUrls2.push(r.url()); });
+  let notConnected, confirmAbsent, p2Stored, p2Status;
+  try {
+    await p2.goto(`${BASE}/`, { waitUntil: 'networkidle2', timeout: 30_000 });
+    notConnected = await p2.waitForFunction(
+      () => !!document.querySelector('.st-not-connected.active'),
+      { polling: 300, timeout: 20_000 },
+    ).then(() => true, () => false);
+    confirmAbsent = await p2.evaluate(() => !document.querySelector('.st-confirm-host.active'));
+    p2Stored = await p2.evaluate(readStored, KEY);
+    p2Status = await p2.evaluate(() => document.getElementById('conn-status')?.dataset.state || '');
+  } finally {
+    await p2.close();
+  }
+
+  // connect() is the ONLY driver of the #conn-status pill off 'idle' (app.js: setStatus
+  // 'connecting'→'ok'/'error'); if it never ran, the pill is untouched. That is the authoritative
+  // "did NOT auto-connect" signal — more robust than counting packets, since the SDK's own init()
+  // preauth warm-up (below) contacts the host regardless of whether the app connected.
+  const CONNECT_STATES = ['connecting', 'ok', 'error'];
+  return {
+    // ── Gated (S2 acceptance criteria) ──
+    // Leg 1 — hash host: confirm overlay, host blanked in storage, no auto-connect
+    confirmShown,
+    p1HostBlanked: (p1Stored?.host ?? '') === '',
+    p1MarkerKept: p1Stored?.worksheetId === MARKER,          // proves a persist actually happened
+    p1ConnectSkipped: !CONNECT_STATES.includes(p1Status),
+    // Leg 2 — plain revisit: not-connected, host still blank, no auto-connect
+    notConnected,
+    confirmAbsent,
+    p2StoragePropagated: p2Stored?.worksheetId === MARKER,   // proves Leg 2 read Leg 1's storage
+    p2HostBlanked: (p2Stored?.host ?? '') === '',
+    p2ConnectSkipped: !CONNECT_STATES.includes(p2Status),
+    // ── Diagnostic (NOT gated) ── the SDK's init() fires preauth warm-up GETs at the unconfirmed
+    // host (e.g. /prism/preauth/info, /callosum/v1/session/info). That is outside S2's scope
+    // (persistence + auto-connect); it is tracked as its own follow-up backlog item.
+    sdkPreauthUrls: [...evilUrls1, ...evilUrls2],
+  };
+}
+
 let ok = false;
 let browser;
 try {
@@ -156,8 +251,24 @@ try {
   console.log(`XSS probe — rendered inert in event log: ${xss.inLog}`);
   xss.probeErrors.forEach((e) => console.log('  - probe page:', e));
 
+  const host = await runHostConfirmProbe(browser);
+  console.log(`Host-confirm probe (S2) — hash host shows confirm overlay: ${host.confirmShown}`);
+  console.log(`Host-confirm probe (S2) — hash host blanked in localStorage: ${host.p1HostBlanked}`);
+  console.log(`Host-confirm probe (S2) — non-host state still persisted (marker): ${host.p1MarkerKept}`);
+  console.log(`Host-confirm probe (S2) — hash host not auto-connected: ${host.p1ConnectSkipped}`);
+  console.log(`Host-confirm probe (S2) — plain revisit inherits storage (marker): ${host.p2StoragePropagated}`);
+  console.log(`Host-confirm probe (S2) — plain revisit host still blank: ${host.p2HostBlanked}`);
+  console.log(`Host-confirm probe (S2) — plain revisit shows not-connected: ${host.notConnected}`);
+  console.log(`Host-confirm probe (S2) — plain revisit hides confirm overlay: ${host.confirmAbsent}`);
+  console.log(`Host-confirm probe (S2) — plain revisit does not auto-connect: ${host.p2ConnectSkipped}`);
+  console.log(`Host-confirm probe (S2) — [diagnostic, not gated] SDK init() preauth GETs at unconfirmed host: ${host.sdkPreauthUrls.length}`);
+  host.sdkPreauthUrls.forEach((u) => console.log('  -', u));
+  const hostOk = host.confirmShown && host.p1HostBlanked && host.p1MarkerKept && host.p1ConnectSkipped
+    && host.notConnected && host.confirmAbsent && host.p2StoragePropagated && host.p2HostBlanked
+    && host.p2ConnectSkipped;
+
   ok = resp.status() === 200 && shellMounted && errors.length === 0 && badResponses.length === 0
-    && !xss.executed && xss.inChip && xss.inLog;
+    && !xss.executed && xss.inChip && xss.inLog && hostOk;
   console.log(ok ? '\nBOOT CHECK: PASS' : '\nBOOT CHECK: FAIL');
 } finally {
   try { await browser?.close(); } catch { /* already gone */ }
