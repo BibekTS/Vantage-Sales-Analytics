@@ -14,13 +14,23 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   third arg through `innerHTML`. Two call sites feed it a variable that is today always a
   literal/enum but would become a sink if ever fed TS/user data: `accordion(title,…)` (app.js:931)
   and `el('span','act-name', a)` (app.js:1266). Never pass TS/link-derived strings as the third
-  arg — omit it and set `textContent` after.
+  arg — omit it and set `textContent` after. All four file:line cites independently re-verified
+  2026-07-10 (M7 review) — exact.
 
 ## Filters & rendering
 
-- 2026-07-08: `pushRuntimeFilters()` + `appliedRuntimeCols` landed, claiming to supersede the S5
-  filter-clobbering finding (`cfbApply()`/`applyLiveFilters()`/`cfbBuild` wiping each other).
-  **Not yet re-verified** — S5 is still open; verify before building on this claim.
+- 2026-07-08 (commit f7d439f, PR #4): `pushRuntimeFilters()` + `appliedRuntimeCols` landed,
+  claiming to supersede the S5 filter-clobbering finding (`cfbApply()`/`applyLiveFilters()`/
+  `cfbBuild` wiping each other). **Not yet re-verified** — S5 is still open; verify before
+  building on this claim.
+
+## Gates
+
+- 2026-07-10 (M7 review): `scripts/smoke-test.mjs:23` (PORT 34917) and `scripts/boot-check.mjs:31`
+  (PORT 34921) hardcode their server ports with no env override — the server-bound gates are NOT
+  safe to run concurrently on one machine (parallel worktrees, or a reviewer running the suite
+  alongside QA, collide with `EADDRINUSE` and produce phantom reds). Only one agent runs them at
+  a time; M8 tracks making them parallel-safe.
 
 ## Upstream / SDK
 

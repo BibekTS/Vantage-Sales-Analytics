@@ -8,3 +8,12 @@ This log is the raw material for org retrospectives (BACKLOG M2).
   the records-only-PR rule and the mandatory micro-retro → shipped as M6 (PR #10).
 - 2026-07-10 (M7): retros before this date lived only in cycle reports and were lost with the
   session → this file created; the Records step now persists each micro-retro here.
+- 2026-07-10 (M7): adversarial review of the org-v2 diff itself caught four structural defects
+  pre-merge (gate-port races under the new parallelism, records-file append conflicts across
+  parallel branches, an ambiguous "once the records PR is in", README contradicting itself on who
+  merges to production) → all fixed in-PR; M8 filed for parallel-safe gate ports. Process changes
+  deserve the same adversarial review as code.
+- 2026-07-10 (M7): two interactive sessions shared one working tree — this session branch-switched
+  and stashed a live S2 cycle's WIP mid-flight before noticing; state was restored and the M7 work
+  moved to an isolated worktree → reinforced in the skill: sessions/agents that build in parallel
+  ALWAYS take a worktree, never the shared checkout.

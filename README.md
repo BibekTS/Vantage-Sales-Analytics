@@ -335,10 +335,13 @@ flowchart LR
     end
     CY --> GATE["Branch + PR + CI gates"]
     PR2 --> GATE
-    GATE --> HUM["Human reviews & merges<br/>merge = production release"]
+    GATE -->|"clean + no protected path"| AUTO[["auto-merge<br/>= production release"]]
+    GATE -->|"guard red · ts-watch PR"| HUM["Human reviews & merges"]
 ```
 
 The **interactive** loop is you, the human CEO, running `/ceo-improve-cycle`. The **automated** loop
 is a weekly cloud routine that runs [`/ts-watch`](.claude/skills/ts-watch/SKILL.md) to catch
-ThoughtSpot SDK/doc drift — it opens exactly one reviewable PR and **never merges**. Both converge on
-the same branch → PR → CI gate, and a human always presses the merge button.
+ThoughtSpot SDK/doc drift — it opens exactly one reviewable PR and **never merges**. Both converge
+on the same branch → PR → CI gates. A cycle PR that is fully green and touches no protected path
+**auto-merges — and every merge is a production release**; ts-watch PRs and anything the `guard`
+job flags always wait for a human.

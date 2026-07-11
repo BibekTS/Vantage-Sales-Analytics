@@ -24,13 +24,24 @@ before starting the next. In this playbook that means: Review Board lenses (alwa
 hunters (always), research fan-out across areas for a large item, and Review Board ∥ QA after a
 build. Dependent stages (research → plan → build) stay sequential.
 
+**Serialize the gates.** `npm test` (port 34917) and `npm run boot-check` (port 34921) bind
+hardcoded localhost ports — two concurrent runs collide with `EADDRINUSE` and produce phantom
+reds (see org-memory "Gates"; M8 tracks making them parallel-safe). Only ONE agent runs the
+server-bound gates at any moment: in the Review Board ∥ QA phase the suite belongs to QA
+(reviewers inspect, they don't start servers), and parallel worktree implementers run only the
+ESM parse — the CEO has `qa-verifier` run the full bar serially, branch by branch.
+
 **Argument:** `$ARGUMENTS` may be a backlog ID (`S1`), a count (`3` = run three cycles),
 `discover` (hunt for NEW bugs — see "Discovery mode"), `discover fix` (hunt, then immediately fix
 the confirmed findings — see "Discovery mode"), or empty (take the highest-priority `open` item).
 If it is a count, run that many cycles, re-reading `BACKLOG.md` each time — and when the picked
-items are **independent** (their researcher briefs prove disjoint file sets), run their
+items are **independent** (their researcher briefs prove disjoint **product** files — the records
+files `BACKLOG.md` and `docs/org-memory/*`, which every branch edits, don't count), run their
 Engineering→QA phases in parallel worktrees, one branch + PR per item, instead of back-to-back.
-Items whose file sets overlap stay sequential.
+Items whose product-file sets overlap stay sequential. Merge parallel PRs **one at a time**: the
+shared records files make same-position append conflicts likely, so after each merge rebase the
+next branch on the updated `main` (`git pull --rebase origin main`, re-resolve the records
+appends, push) before merging it.
 
 ## 1. CEO — pick the work
 - Read `BACKLOG.md`. Choose the item (arg, or top `open` by priority). An item stuck `in-progress`
@@ -142,7 +153,7 @@ the `fix` argument the same run chains straight into fixing, so hunt-and-fix is 
    audit everywhere it applies. Check `docs/org-memory/codebase.md` first — grounds recorded as
    recently audited-clean are wasted hunts.
 2. **Fan out `bug-hunter` agents in parallel — one message, one hunter per lens** (correctness /
-   security / regression / data-integrity; fallback: `reviewer` or `Explore`), each assigned the
+   security / regression / data-integrity; fallback: built-in `Explore`), each assigned the
    ground and its single lens. Every finding needs a concrete failure scenario — a finding without
    one is an opinion and gets dropped.
 3. **Dedupe and verify**: discard findings that duplicate an existing BACKLOG row or each other,
@@ -150,10 +161,14 @@ the `fix` argument the same run chains straight into fixing, so hunt-and-fix is 
 4. **Records**: append the confirmed findings as S-rows with testable acceptance criteria, via a
    records-only PR (same flow as an already-satisfied item in step 1). Persist the hunt's
    Memory-worthy facts — including grounds that came back clean — per step 6.
-5. **`fix` argument only — chain into fix cycles:** once the records PR is in, run the standard
-   playbook (steps 2–8) on each newly-filed finding, highest priority first. Independent findings
-   (disjoint file sets) get parallel worktrees, one implementer, one branch, one PR each;
-   overlapping ones go sequentially. Plain `discover` stops after filing.
+5. **`fix` argument only — chain into fix cycles:** wait for the records PR to actually **merge**
+   (records-only, so it auto-merges under the normal conditions), then `git checkout main &&
+   git pull` so the new rows exist on `main` before any fix branch is cut — branching earlier
+   strands the `in-progress` Status edit and duplicates rows. Then run the standard playbook
+   (steps 2–8) on each newly-filed finding, highest priority first. Independent findings
+   (disjoint product files — records files don't count, see "Parallel dispatch") get parallel
+   worktrees, one implementer, one branch, one PR each, merged one at a time with rebases in
+   between; overlapping ones go sequentially. Plain `discover` stops after filing.
 6. **Report** what was hunted, what was found, what was filed (and, with `fix`, what shipped) —
    and the micro-retro.
 
