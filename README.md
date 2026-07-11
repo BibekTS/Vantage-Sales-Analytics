@@ -287,6 +287,24 @@ Review Board and QA read the same diff **concurrently** (the reviewer lenses eac
 parallel agent); when `/ceo-improve-cycle N` picks independent items, their build→QA phases run in
 **parallel git worktrees**, one branch and PR per item.
 
+At a glance — the CEO orchestrates the departments, dispatching them in parallel wherever they have
+no data dependency (Review Board ∥ QA on one diff; every reviewer/hunter lens its own agent):
+
+```
+Human CEO ── sets priorities in BACKLOG.md
+    │
+CEO session ── /ceo-improve-cycle · orchestrates, never builds
+    │  reads docs/org-memory/ first, then dispatches (in parallel where independent)
+    │
+    ├─ researcher     Research & Intelligence   read-only   maps the code, flags risks
+    ├─ architect      Engineering · design      read-only   writes the implementation plan
+    ├─ implementer    Engineering · build       BUILDS      edits on a branch (worktree-isolated)
+    ├─ reviewer       Review Board              read-only   refutes the diff — 1 agent / lens
+    ├─ bug-hunter     Discovery                 read-only   hunts NEW bugs — 1 hunter / lens
+    ├─ qa-verifier    QA                        read-only   npm test · boot-check · feature check
+    └─ Operations     gh · /schedule · /loop    ships       opens the PR, merges only when gates green
+```
+
 Each department is a **named agent** in [`.claude/agents/`](.claude/agents/), dispatched by the CEO
 with a read-only or build-scoped toolset:
 
