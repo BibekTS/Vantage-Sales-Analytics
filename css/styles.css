@@ -355,6 +355,38 @@ a.tb-icon-btn { display: inline-flex; align-items: center; text-decoration: none
 .lr-type { color: var(--accent); font-weight: 700; }
 .lr-data { color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; }
 
+/* ── Webhook Inbox ───────────────────────────────────────────────────────── */
+.wh-list { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.wh-hint { padding: 14px 16px; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-2); }
+.wh-hint-title { font-weight: 700; font-size: 12.5px; color: var(--text-primary); margin-bottom: 5px; }
+.wh-hint-body { font-size: 12px; color: var(--text-muted); line-height: 1.6; font-family: var(--mono); }
+.wh-card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); overflow: hidden; }
+.wh-card-head {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); background: var(--surface-3);
+}
+.wh-badge { font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.wh-badge--ok { color: var(--success, #2f9e44); background: color-mix(in srgb, var(--success, #2f9e44) 16%, transparent); }
+.wh-badge--warn { color: var(--warn, #b7791f); background: color-mix(in srgb, var(--warn, #b7791f) 16%, transparent); }
+.wh-type { font-weight: 700; font-size: 12px; color: var(--accent); flex: 1; word-break: break-word; }
+.wh-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.wh-kpi { padding: 12px; }
+.wh-kpi-title { font-weight: 800; font-size: 14px; color: var(--text-primary); margin-bottom: 10px; }
+.wh-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 16px; }
+.wh-kpi-field { display: flex; flex-direction: column; gap: 2px; }
+.wh-kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.wh-kpi-value { font-size: 13px; color: var(--text-primary); font-weight: 600; word-break: break-word; }
+.wh-kpi-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.wh-link {
+  font-size: 11.5px; font-weight: 600; padding: 5px 11px; border-radius: 6px; text-decoration: none;
+  color: var(--navy); background: var(--accent-soft); border: 1px solid var(--border);
+}
+.wh-link:hover { background: var(--accent); color: #fff; }
+.wh-json {
+  margin: 0; padding: 12px; font-family: var(--mono); font-size: 11px; line-height: 1.55;
+  color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
+}
+
 /* SDK code view — keep dark like compendium code blocks */
 .code-view {
   padding: 16px 18px; font-family: var(--mono); font-size: 12px;

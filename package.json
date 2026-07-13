@@ -12,6 +12,7 @@
     "test": "node scripts/smoke-test.mjs",
     "boot-check": "node scripts/boot-check.mjs",
     "vendor-sdk": "node scripts/vendor-sdk.mjs",
+    "register-webhook": "node scripts/register-webhook.mjs",
     "check-ts-updates": "node scripts/check-ts-updates.mjs"
   },
   "engines": {

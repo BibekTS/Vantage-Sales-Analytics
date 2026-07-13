@@ -796,14 +796,17 @@ function bindBottomPanel() {
     $('#pane-code').classList.toggle('active', bottomTab === 'code');
     $('#pane-flow').classList.toggle('active', bottomTab === 'flow');
     $('#pane-apis').classList.toggle('active', bottomTab === 'apis');
+    $('#pane-webhook').classList.toggle('active', bottomTab === 'webhook');
     $('#copy-code').hidden = bottomTab !== 'code';
     if ($('#bottom').dataset.open === 'false') toggleBottom(true);
     if (bottomTab === 'code') refreshCode();
     if (bottomTab === 'flow') renderFlow();
     if (bottomTab === 'apis') renderApis();
+    if (bottomTab === 'webhook') startWebhookPolling(); else stopWebhookPolling();
   }));
   $('#bp-toggle').addEventListener('click', () => toggleBottom());
   $('#clear-log').addEventListener('click', () => {
+    if (bottomTab === 'webhook') { clearWebhookInbox(); return; }
     $('#log-list').innerHTML = '<div class="log-empty">No events yet — interact with the embed.</div>';
     logCount = 0; $('#log-count').textContent = '0';
   });
@@ -832,6 +835,134 @@ function logEvent(type, data) {
   const dataEl = el('span', 'lr-data'); dataEl.textContent = String(data);
   row.append(timeEl, typeEl, dataEl);
   list.insertBefore(row, list.firstChild);
+}
+
+// ═══ WEBHOOK INBOX — live view of ThoughtSpot deliveries hitting server.js /api/webhook ═══════════
+// The receiver is opt-in (TS_ALLOW_WEBHOOK_SINK) and localhost-only; this panel just polls it and
+// renders what lands. Every payload-derived string enters the DOM via textContent (untrusted → XSS).
+let webhookTimer = null;
+
+function startWebhookPolling() {
+  if (webhookTimer) return;
+  fetchWebhookEvents();                         // paint immediately
+  webhookTimer = setInterval(fetchWebhookEvents, 4000);
+}
+function stopWebhookPolling() {
+  if (webhookTimer) { clearInterval(webhookTimer); webhookTimer = null; }
+}
+
+async function fetchWebhookEvents() {
+  try {
+    const res = await fetch(`${API_BASE}/api/webhook/events`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    renderWebhookEvents(await res.json());
+  } catch (_) { /* server unreachable — keep the last render */ }
+}
+
+async function clearWebhookInbox() {
+  try { await fetch(`${API_BASE}/api/webhook/events`, { method: 'DELETE' }); } catch (_) {}
+  $('#wh-count').textContent = '0';
+  const empty = el('div', 'log-empty'); empty.textContent = 'Inbox cleared — waiting for the next delivery.';
+  $('#wh-list').replaceChildren(empty);
+}
+
+function renderWebhookEvents(data) {
+  const list = $('#wh-list');
+  const events = Array.isArray(data.events) ? data.events : [];
+  $('#wh-count').textContent = String(events.length);
+
+  if (!data.enabled) {
+    const hint = el('div', 'wh-hint');
+    const h = el('div', 'wh-hint-title'); h.textContent = 'Webhook receiver is off';
+    const p = el('div', 'wh-hint-body');
+    p.textContent = 'Set TS_ALLOW_WEBHOOK_SINK=true in .env (and optionally TS_WEBHOOK_SECRET for HMAC verification), then restart the server. Point a ThoughtSpot webhook at POST /api/webhook through an ngrok tunnel.';
+    hint.append(h, p);
+    list.replaceChildren(hint);
+    return;
+  }
+  if (!events.length) {
+    const empty = el('div', 'log-empty');
+    empty.textContent = data.secretConfigured
+      ? 'Receiver armed (HMAC verification on). Waiting for a ThoughtSpot delivery…'
+      : 'Receiver armed (unverified — no shared secret set). Waiting for a ThoughtSpot delivery…';
+    list.replaceChildren(empty);
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  events.forEach((ev) => frag.appendChild(webhookCard(ev)));
+  list.replaceChildren(frag);
+}
+
+// One delivery → a card. KPI-monitor alerts get a rich card; everything else a generic JSON card.
+function webhookCard(ev) {
+  const card = el('div', 'wh-card');
+
+  const head = el('div', 'wh-card-head');
+  const badge = el('span', `wh-badge ${ev.verified ? 'wh-badge--ok' : 'wh-badge--warn'}`);
+  badge.textContent = ev.verified ? '✓ verified' : '⚠ unverified';
+  badge.title = ev.verifyReason || '';
+  const type = el('span', 'wh-type'); type.textContent = ev.notificationType || 'webhook event';
+  const time = el('span', 'wh-time');
+  try { time.textContent = new Date(ev.receivedAt).toTimeString().slice(0, 8); } catch (_) { time.textContent = ''; }
+  head.append(badge, type, time);
+  card.appendChild(head);
+
+  const kpi = ev.payload?.data?.scheduledMetricUpdateWebhookNotification;
+  card.appendChild(kpi ? kpiAlertBody(ev.payload.data, kpi) : genericBody(ev.payload));
+  return card;
+}
+
+function kpiAlertBody(data, kpi) {
+  const wrap = el('div', 'wh-kpi');
+  const rule = kpi.monitorRuleForWebhook || {};
+  const exec = kpi.ruleExecutionDetails || {};
+
+  const title = el('div', 'wh-kpi-title');
+  title.textContent = rule.ruleName || rule.metricName || 'KPI alert';
+  wrap.appendChild(title);
+
+  const grid = el('div', 'wh-kpi-grid');
+  const field = (label, value) => {
+    if (value == null || value === '') return;
+    const f = el('div', 'wh-kpi-field');
+    const l = el('span', 'wh-kpi-label'); l.textContent = label;
+    const v = el('span', 'wh-kpi-value'); v.textContent = String(value);
+    f.append(l, v); grid.appendChild(f);
+  };
+  field('Metric', rule.metricName);
+  field('Change', exec.percentageChange);
+  field('New value', exec.currentMetricValue);
+  field('When', exec.executionTimestamp);
+  field('Schedule', rule.scheduleString);
+  field('Recipient', data.currentUser?.displayName || data.currentUser?.email);
+  wrap.appendChild(grid);
+
+  // Only surface http(s) links from the payload — guards against a javascript: URL in the href.
+  const links = [
+    ['View metric', rule.metricUrl],
+    ['Modify alert', kpi.modifyUrl],
+    ['Unsubscribe', kpi.unsubscribeUrl],
+  ].filter(([, href]) => typeof href === 'string' && /^https?:\/\//i.test(href));
+  if (links.length) {
+    const bar = el('div', 'wh-kpi-actions');
+    links.forEach(([label, href]) => {
+      const a = document.createElement('a');
+      a.className = 'wh-link'; a.href = href; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = label;
+      bar.appendChild(a);
+    });
+    wrap.appendChild(bar);
+  }
+  return wrap;
+}
+
+function genericBody(payload) {
+  const pre = el('pre', 'wh-json');
+  let text;
+  try { text = JSON.stringify(payload, null, 2); } catch (_) { text = String(payload); }
+  if (text && text.length > 4000) text = text.slice(0, 4000) + '\n… (truncated)';
+  pre.textContent = text;   // textContent — never innerHTML for payload data
+  return pre;
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────

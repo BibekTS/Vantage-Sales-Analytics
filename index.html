@@ -196,6 +196,7 @@
             <button class="bp-tab" data-tab="code">&lt;/&gt; SDK Code</button>
             <button class="bp-tab" data-tab="flow">⟿ SDK Lifecycle</button>
             <button class="bp-tab" data-tab="apis">⚯ APIs Used</button>
+            <button class="bp-tab" data-tab="webhook">🔔 Webhooks <span id="wh-count" class="bp-count">0</span></button>
           </div>
           <div class="bp-head-r">
             <button id="copy-code" class="bp-mini" hidden>Copy</button>
@@ -208,6 +209,7 @@
           <div class="bp-pane" id="pane-code"><pre id="code-view" class="code-view"></pre></div>
           <div class="bp-pane" id="pane-flow"><div id="flow-diagram" class="flow"></div></div>
           <div class="bp-pane" id="pane-apis"><div class="log-empty">Connect and render an embed to see the APIs in use.</div></div>
+          <div class="bp-pane" id="pane-webhook"><div id="wh-list" class="wh-list"><div class="log-empty">Open the Webhooks tab to receive ThoughtSpot webhook deliveries here.</div></div></div>
         </div>
       </section>
     </main>
