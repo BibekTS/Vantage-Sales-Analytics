@@ -209,6 +209,83 @@ async function runHostConfirmProbe(browser) {
   };
 }
 
+// Standalone-Answer picker probe (BACKLOG S3): the Single-Viz section must offer a standalone
+// saved-Answer picker, and an `answerId` in state must drive the SearchEmbed code path (a saved
+// answer cannot be embedded as a liveboard viz — see embed.js/generateCode). This is a host-free
+// feature probe: the #s= hash carries {section:'viz', answerId:GUID} with NO host, so nothing
+// contacts ThoughtSpot (no confirm overlay, no iframe) — we assert the UI landed and the generated
+// SDK snippet reflects the answer path. Runs on its own page like the XSS/host-confirm probes.
+async function runAnswerPickerProbe(browser) {
+  const ANS = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'; // dummy GUID; host omitted -> no confirm, no host contact
+  const hash = Buffer.from(JSON.stringify({ section: 'viz', answerId: ANS }), 'utf8').toString('base64url');
+  const probe = await browser.newPage();
+  const probeErrors = [];
+  probe.on('pageerror', (e) => probeErrors.push('PAGEERROR: ' + e.message));
+  try {
+    await probe.goto(`${BASE}/#s=${hash}`, { waitUntil: 'networkidle2', timeout: 30_000 });
+    const retryUntil = (fn) => probe.waitForFunction(fn, { polling: 500, timeout: 20_000 }).then(() => true, () => false);
+    // Positive control: the inspector must render the standalone-Answer picker (its 'Answer' label).
+    const pickerRendered = await retryUntil(() =>
+      [...document.querySelectorAll('#insp-body .fld-lbl')].some((l) => l.textContent.trim() === 'Answer'));
+    // The generated SDK code must take the SearchEmbed({answerId, hideSearchBar}) path for this state.
+    // Click the SDK Code tab if the pane hasn't been refreshed yet (refreshCode runs on tab switch).
+    const codeOk = await retryUntil(() => {
+      const txt = document.getElementById('code-view')?.textContent || '';
+      const hit = txt.includes('SearchEmbed') && txt.includes('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee') && txt.includes('hideSearchBar: true');
+      if (!hit) document.querySelector('.bp-tab[data-tab="code"]')?.click();
+      return hit;
+    });
+    return { pickerRendered, codeOk, noErrors: probeErrors.length === 0, probeErrors };
+  } finally {
+    await probe.close();
+  }
+}
+
+// Answer auto-load pre-confirm probe (BACKLOG S3, fix #2): the standalone-Answer auto-load in
+// sectionObject() fires a CREDENTIALED discovery POST (discoverAnswers → POST /metadata/search).
+// That POST must NEVER hit a host that arrived via the attacker-controllable #s= share hash before
+// the user has explicitly clicked Connect — otherwise a shared link would silently drive the
+// visitor's session against an attacker-named host. The guard is app.js's `connected &&` prefix on
+// the auto-load condition (sectionObject, ~app.js:1118).
+//
+// Navigate to `#s={section:'viz', host:EVIL}`. The app boots into pendingHostConfirm (host set,
+// NOT connected) and renders the Single-Viz inspector — so the auto-load condition
+// (`connected && answerList === undefined`) is genuinely evaluated pre-connect. Assert the confirm
+// overlay is up (positive control: we are in the pre-confirm state where the guard matters) AND that
+// the app fired NO discovery POST at the unconfirmed host. Match ONLY the discovery path
+// (/metadata/search); the SDK's own preauth GETs (/prism/preauth/info, /callosum/v1/session/info) at
+// an unconfirmed host are a SEPARATE, pre-existing, backlog-tracked issue (S10) and WILL still fire
+// here — conflating them would false-fail this probe. Runs on its own page like the other probes.
+async function runAnswerPreconfirmProbe(browser) {
+  const HOST = 'https://evil.s3probe.example';
+  const hash = Buffer.from(
+    JSON.stringify({ section: 'viz', host: HOST }), 'utf8'
+  ).toString('base64url');
+  const probe = await browser.newPage();
+  // Record ONLY the app's own discovery POST (discoverAnswers → /metadata/search) at the evil host,
+  // NOT the SDK preauth GETs — see the note above. Attached BEFORE goto so a boot-time fetch is caught.
+  const discoveryHits = [];
+  probe.on('request', (r) => {
+    const u = r.url();
+    if (u.startsWith(HOST) && u.includes('/metadata/search')) discoveryHits.push(u);
+  });
+  let confirmShown;
+  try {
+    await probe.goto(`${BASE}/#s=${hash}`, { waitUntil: 'networkidle2', timeout: 30_000 });
+    // Positive control: the hash host must surface as a pending confirmation naming EVIL — proves we
+    // are in the pre-confirm state where the auto-load guard is the thing under test.
+    confirmShown = await probe.waitForFunction((host) => {
+      const active = document.querySelector('.st-confirm-host.active');
+      const name = document.getElementById('confirm-host-name')?.textContent || '';
+      return !!active && name.includes(host);
+    }, { polling: 300, timeout: 20_000 }, HOST).then(() => true, () => false);
+    await sleep(600); // let any (guarded-away) auto-load fetch initiate before we read the tally
+    return { confirmShown, noDiscoveryContact: discoveryHits.length === 0, discoveryHits };
+  } finally {
+    await probe.close();
+  }
+}
+
 let ok = false;
 let browser;
 try {
@@ -267,8 +344,21 @@ try {
     && host.notConnected && host.confirmAbsent && host.p2StoragePropagated && host.p2HostBlanked
     && host.p2ConnectSkipped;
 
+  const answer = await runAnswerPickerProbe(browser);
+  console.log(`Answer-picker probe (S3) — standalone-Answer picker renders: ${answer.pickerRendered}`);
+  console.log(`Answer-picker probe (S3) — answerId drives SearchEmbed code path: ${answer.codeOk}`);
+  console.log(`Answer-picker probe (S3) — no page errors: ${answer.noErrors}`);
+  answer.probeErrors.forEach((e) => console.log('  - probe page:', e));
+  const answerOk = answer.pickerRendered && answer.codeOk && answer.noErrors;
+
+  const s3pre = await runAnswerPreconfirmProbe(browser);
+  console.log(`Answer pre-confirm probe (S3) — confirm overlay shown (pre-connect state): ${s3pre.confirmShown}`);
+  console.log(`Answer pre-confirm probe (S3) — no discovery POST to unconfirmed host: ${s3pre.noDiscoveryContact}`);
+  s3pre.discoveryHits.forEach((u) => console.log('  - discovery POST at unconfirmed host:', u));
+
   ok = resp.status() === 200 && shellMounted && errors.length === 0 && badResponses.length === 0
-    && !xss.executed && xss.inChip && xss.inLog && hostOk;
+    && !xss.executed && xss.inChip && xss.inLog && hostOk && answerOk
+    && s3pre.confirmShown && s3pre.noDiscoveryContact;
   console.log(ok ? '\nBOOT CHECK: PASS' : '\nBOOT CHECK: FAIL');
 } finally {
   try { await browser?.close(); } catch { /* already gone */ }

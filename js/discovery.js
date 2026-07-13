@@ -184,25 +184,27 @@ export async function discoverViz(host, liveboardId) {
   }
 }
 
-/** List standalone answers that depend on a worksheet. */
-export async function discoverAnswers(host, worksheetId) {
+/**
+ * List all standalone saved Answers on the instance. Answers are top-level ANSWER metadata
+ * objects (like Liveboards), so we search that type directly and read the top-level results —
+ * NOT a worksheet's `dependent_objects` (that field is an opaque map, not keyed by type, so the
+ * old dependent-traversal silently returned nothing). Mirrors discoverObjects' single-type search.
+ */
+export async function discoverAnswers(host) {
   try {
     const resp = await api(host, '/api/rest/2.0/metadata/search', {
       method: 'POST',
       body: JSON.stringify({
-        metadata: [{ type: 'LOGICAL_TABLE', identifier: worksheetId }],
-        include_dependent_objects: true,
-        dependent_objects_record_size: 1000,
-        record_size: 1,
+        metadata: [{ type: 'ANSWER' }],
+        record_size: 10000,
+        sort_options: { field_name: 'NAME', order: 'ASC' },
       }),
     });
     if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
-    const data = await resp.json();
-    const wsObj = Array.isArray(data) ? data[0] : null;
-    const deps = wsObj?.dependent_objects ?? {};
-    const answers = (Array.isArray(deps.ANSWER) ? deps.ANSWER : [])
-      .map(a => ({ id: a.metadata_id, name: a.metadata_name || 'Untitled' }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const arr = await resp.json();
+    const answers = (Array.isArray(arr) ? arr : [])
+      .filter(m => m.metadata_type === 'ANSWER')
+      .map(m => ({ id: m.metadata_id, name: m.metadata_name || 'Untitled' }));
     return { ok: true, answers };
   } catch (err) {
     return { ok: false, error: err.message };

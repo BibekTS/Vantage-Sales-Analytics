@@ -17,3 +17,10 @@ This log is the raw material for org retrospectives (BACKLOG M2).
   and stashed a live S2 cycle's WIP mid-flight before noticing; state was restored and the M7 work
   moved to an isolated worktree → reinforced in the skill: sessions/agents that build in parallel
   ALWAYS take a worktree, never the shared checkout.
+- 2026-07-13 (S3): the cycle adopted a dead cycle's uncommitted WIP found in the shared checkout
+  (a full S3 implementation, no commit/PR, backlog still `open`). Routing it through research +
+  3 adversarial lenses + `/code-review` + QA (rather than trusting or discarding it) paid off: the
+  correctness lens caught an `answerList` stale-on-host-switch bug, and — critically — the fix for
+  THAT (a `connect()` reset) *introduced* a last-write-wins race that only `/code-review` then
+  caught. Lesson: a correctness fix is itself an unverified diff; re-review after fixing, don't just
+  re-run gates. No process/skill friction — the playbook's fix→re-verify loop worked as written.
