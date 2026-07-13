@@ -17,6 +17,42 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   arg — omit it and set `textContent` after. All four file:line cites independently re-verified
   2026-07-10 (M7 review) — exact.
 
+## Standalone Answers (S3)
+
+- 2026-07-13 (S3, this PR): the `answerId` render/generate/state plumbing **predates** the picker
+  work — state key (`state.js:38` default, `:252` sanitize cap-128, `mergeKnown` spread), the
+  `SearchEmbed({answerId,hideSearchBar:true})` render path (`embed.js:272-286`, gives `answerId`
+  precedence over `vizId`), the code generator (`app.js:4224,4295-4297`), and lifecycle/APIs
+  answer-awareness were all already present. The "Standalone Answer unreachable" gap was ONLY (1) no
+  picker UI in `sectionObject` and (2) a broken `discoverAnswers`. Picker adds no new state key.
+- 2026-07-13 (S3): `discoverAnswers(host)` (`discovery.js:193-212`) now does an instance-wide
+  `POST /metadata/search {metadata:[{type:'ANSWER'}], record_size:10000, sort_options:NAME/ASC}`,
+  parsing the top-level array identically to `discoverObjects` (`.filter(metadata_type==='ANSWER')`
+  → `{id:metadata_id, name:metadata_name||'Untitled'}`). The old 2-arg worksheet-`dependent_objects`
+  traversal was **dead code** (declared `answerCache`, never called; `dependent_objects` is an opaque
+  map not keyed by type → always `[]`). Sole caller is `loadAnswers()` (`app.js:1155`).
+- 2026-07-13 (S3): the answer auto-load fires a **credentialed** `POST /metadata/search`; its
+  host-confirm safety rests entirely on the `connected &&` prefix (`app.js:1116`). `connected===true`
+  is a safe proxy for "host confirmed" because it is set only in `connect()` (`app.js:481`) AFTER
+  `pendingHostConfirm=false` (`:452`), and there is no `hashchange`/`popstate` listener (`loadState`
+  runs once, `:274`). Any future code that sets `connected` elsewhere, or adds a live hash re-read,
+  re-opens the pre-confirm leak. Boot-check `runAnswerPreconfirmProbe` guards this — but only for the
+  literal `/metadata/search` path; a discovery-endpoint refactor would need the probe widened.
+- 2026-07-13 (S3): `refreshCode` writes generated SDK code via `pre.textContent` (`app.js:4536`),
+  which is why `esc()` (`app.js:4221`, escapes only `\` and `'`, NOT HTML) is XSS-safe today. If the
+  code view ever switches to `innerHTML` (e.g. syntax highlighting), every `esc()`'d hash-derived
+  value (`answerId`/`worksheetId`/`liveboardId`) becomes a sink.
+
+## Session caches / host switch (S3 review)
+
+- 2026-07-13 (S3 review): `connect()` (`app.js:447`) must reset every **non-host-keyed** session
+  cache or an in-session host switch serves the prior host's objects. `answerList`/`answersLoading`
+  (`app.js:204-205`) are now reset there (`:491`). `loadAnswers()` is additionally **host-fenced**
+  (captures `getState().host`, drops the write + preserves the loading flag if the host changed
+  mid-flight) — because the reset alone re-opened a last-write-wins race (a stale in-flight fetch
+  could overwrite the new host's result). `vizCache` (`app.js:202`) is the same class and is NOT yet
+  reset — latent, low-reachability (GUID-keyed, mostly self-masking); filed as **S11**.
+
 ## Filters & rendering
 
 - 2026-07-08 (commit f7d439f, PR #4): `pushRuntimeFilters()` + `appliedRuntimeCols` landed,

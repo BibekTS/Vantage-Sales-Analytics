@@ -201,7 +201,8 @@ let connected = false;
 let discovered = { worksheets: [], liveboards: [] };
 let vizCache = {};      // liveboardId -> [{id,name}] | null (failed) | undefined (not loaded)
 const _vizLoading = new Set(); // liveboardIds with a fetch in flight
-let answerCache = {};   // worksheetId -> [{id,name}]
+let answersLoading = false; // a standalone-answer discovery fetch is in flight
+let answerList;         // [{id,name}] | null (failed) | undefined (not loaded) — all saved Answers on the instance
 let logCount = 0;
 let bottomTab = 'log';
 const customActionRegistry = {}; // id -> { type, label, webhook, urlTemplate, drillLiveboardId }
@@ -484,6 +485,11 @@ async function connect({ silent = false } = {}) {
   currentUserLogin = ''; // re-resolved (scoped to this session's identity) by refreshPersonalCopies()
   const objs = await Discovery.discoverObjects(host);
   if (objs.ok) discovered = { worksheets: objs.worksheets, liveboards: objs.liveboards };
+  // Standalone saved Answers are cached in a flat session global (not keyed by host), so clear it
+  // on (re)connect — otherwise a host switch keeps showing the prior host's answers and the picker's
+  // "load once" guard never refetches for the new host. Fresh undefined re-triggers loadAnswers().
+  answerList = undefined;
+  answersLoading = false;
   // Personal liveboards: repopulate the current board's copies (non-fatal — refreshPersonalCopies
   // resolves the scoping identity itself and stays empty if that or the search fails).
   if (getState().personalLb?.enabled) refreshPersonalCopies();
@@ -1068,7 +1074,7 @@ function sectionObject(s) {
       .map(lb => ({ id: lb.id, name: lb.tags?.length ? `${lb.name}  ·  ${lb.tags.join(', ')}` : lb.name }));
     c.appendChild(labeledSelect('Liveboard', s.liveboardId, lbOptions,
       async v => {
-        setState({ liveboardId: v, vizId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {}, personalLb: { ...getState().personalLb, activeCopyId: '' } });
+        setState({ liveboardId: v, vizId: '', answerId: '', cfbCols: [], cfbSelected: {}, cfbSort: {}, cfbOrder: {}, cfbMetric: {}, personalLb: { ...getState().personalLb, activeCopyId: '' } });
         cfbAllColumns = []; cfbValueCache = {}; cfbContents = []; cfbNumericCols = []; cfbDateCols = new Set(); cfbMetricCache = {}; cfbLoadedFor = ''; cfbCols = []; cfbSelected = {}; cfbSort = {}; cfbOrder = {}; cfbMetric = {};
         // Switch the embed IMMEDIATELY — a Liveboard embed only needs liveboardId. The viz list
         // (for the Visualization dropdown) and the Personal-liveboards strip are ancillary, so load
@@ -1104,6 +1110,30 @@ function sectionObject(s) {
         v => { setState({ vizId: v.trim(), answerId: '' }); render(); },
         'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'));
     }
+    // Standalone saved Answer — the OTHER thing the Single-Viz section can embed. A saved answer
+    // cannot be embedded as a liveboard viz (SDK rule), so it renders via SearchEmbed({answerId,
+    // hideSearchBar:true}) — see embed.js. Answers are top-level objects (like Liveboards), so we
+    // list them all directly; picking one clears vizId (mutual exclusion — embed.js gives answerId
+    // precedence). Auto-load ONLY when connected, so a shared #s= link can't trigger a credentialed
+    // discovery POST at an unconfirmed host before the user clicks Connect (host-confirm invariant).
+    c.appendChild(el('div', 'sec-note', 'Or embed a standalone saved Answer:')); // literal only (el 3rd arg = innerHTML)
+    if (connected && answerList === undefined && !answersLoading) {
+      loadAnswers().then(() => renderInspector());
+    }
+    const answers = answerList || [];
+    c.appendChild(labeledSelect('Answer', s.answerId, answers,
+      v => { setState({ answerId: v, vizId: '' }); renderInspector(); render(); },
+      answersLoading ? 'Loading saved Answers…' : !connected ? 'Connect to load saved Answers' : '', !connected));
+    if (connected && !answersLoading && answers.length === 0) {
+      const note = el('div', 'sec-note');
+      note.textContent = answerList === null
+        ? 'Answer list unavailable (CORS or auth). Paste an Answer GUID directly:'
+        : 'No saved Answers found. Paste an Answer GUID directly:';
+      c.appendChild(note);
+      c.appendChild(textField('Answer GUID', s.answerId,
+        v => { setState({ answerId: v.trim(), vizId: '' }); render(); },
+        'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'));
+    }
   }
   if (needs === 'none') c.appendChild(el('div', 'sec-note', 'Full App needs no GUID — it embeds the whole ThoughtSpot experience.'));
 
@@ -1118,6 +1148,21 @@ async function loadViz(liveboardId) {
     vizCache[liveboardId] = r.ok ? (r.visualizations || []) : null;
   } finally {
     _vizLoading.delete(liveboardId);
+  }
+}
+
+// All standalone saved Answers on the instance. Flat session cache: undefined = not loaded,
+// null = failed (UI shows a GUID-paste fallback), array = loaded. Deduped by answersLoading.
+async function loadAnswers() {
+  if (answerList !== undefined || answersLoading) return;
+  answersLoading = true;
+  const host = getState().host; // fence: a mid-flight host switch must not commit a stale result
+  try {
+    const r = await Discovery.discoverAnswers(host);
+    if (getState().host !== host) return; // host changed while in flight — drop this stale response
+    answerList = r.ok ? (r.answers || []) : null;
+  } finally {
+    if (getState().host === host) answersLoading = false; // only OUR fetch owns the flag for this host
   }
 }
 
