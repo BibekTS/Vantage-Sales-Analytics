@@ -150,7 +150,7 @@ section builds them and mirrors each one into the **SDK Code** tab. Pick a **typ
 | **Write-back** | `POST /api/writeback` (dev-proxy stub) | Round-trips a value to a system of record |
 | **Drill-down** | Re-renders at a detail Liveboard | Navigates to a focused board, filters carried over |
 
-Two host-side patterns ship wired up, each with a full write-up in [`docs/`](docs/):
+Three integrations ship wired up, each with a full write-up in [`docs/`](docs/):
 
 - **Download PDF (Callback)** — a `Callback` action pulls the rows behind a visualization via its
   `answerService` and builds a paginated PDF **client-side** (regional sales statements, one per
@@ -162,6 +162,13 @@ Two host-side patterns ship wired up, each with a full write-up in [`docs/`](doc
   `POST /api/rest/2.0/report/liveboard` with the **current active filters baked in** — bypassing
   ThoughtSpot's native Download modal so you control every option (and which ones the user sees).
   See [docs/customize-export.md](docs/customize-export.md).
+- **Webhook Inbox (scheduled-Liveboard deliveries)** — a fail-closed, multipart-aware receiver
+  (`POST /api/webhook`) plus a bottom-panel 🔔 **Webhooks** tab that shows ThoughtSpot's **recipient
+  batching** and lets you **download each recipient's actual report** to see what their row-level
+  security produced (external batched into one webhook, each internal user in its own, groups
+  expanded, RLS-blocked users skipped). Schedule one with `npm run schedule-liveboard`, trigger it
+  with Send now, or rehearse locally with `npm run simulate-webhook -- --multipart`. Full walkthrough
+  in [docs/webhook-inbox-demo.md](docs/webhook-inbox-demo.md).
 
 ---
 
@@ -176,6 +183,9 @@ Two host-side patterns ship wired up, each with a full write-up in [`docs/`](doc
 | `npm test` | Boot the server and assert the security guards + static restrictions (**the security gate**) |
 | `npm run boot-check` | Boot the app in headless Chrome and fail on any JS error or non-favicon 4xx (**the frontend gate**) |
 | `npm run vendor-sdk` | Download a pinned copy of the SDK into `vendor/` to self-host it |
+| `npm run register-webhook -- --url=…` | Register the demo webhook on your ThoughtSpot instance (needs a tunnel + admin token) |
+| `npm run schedule-liveboard -- --liveboard=… --users=… --emails=…` | Create a Liveboard schedule with a recipient mix, then trigger it with Send now |
+| `npm run simulate-webhook -- --multipart` | Rehearse deliveries into the local receiver (see [docs/webhook-inbox-demo.md](docs/webhook-inbox-demo.md)) |
 
 ---
 

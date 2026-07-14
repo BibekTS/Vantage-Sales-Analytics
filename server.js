@@ -46,6 +46,7 @@ require('dotenv').config();
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
+const { boundaryOf, parseMultipart, splitMultipart } = require('./lib/multipart');
 
 // ── Node version guard (native fetch needs Node 18+) ────────────────────────────────────────
 if (typeof fetch === 'undefined') {
@@ -74,6 +75,10 @@ const ALLOW_DEV_PROXY = truthy(process.env.TS_ALLOW_DEV_PROXY); // permit the /a
 const ALLOW_WEBHOOK_SINK = truthy(process.env.TS_ALLOW_WEBHOOK_SINK);
 const WEBHOOK_SECRET = process.env.TS_WEBHOOK_SECRET || '';
 const WEBHOOK_SIG_HEADER = (process.env.TS_WEBHOOK_SIG_HEADER || 'x-ts-signature').toLowerCase();
+// Real scheduled-Liveboard deliveries arrive as multipart/form-data with the rendered report as a
+// binary attachment — cap the whole POST so a delivery can't exhaust memory (a Liveboard PDF is a
+// few MB; 30mb is generous). Override with TS_WEBHOOK_MAX_MB.
+const WEBHOOK_MULTIPART_LIMIT = `${Number(process.env.TS_WEBHOOK_MAX_MB) || 30}mb`;
 // '*' opts out of the group guard entirely (back to "any group"); otherwise an explicit set.
 const GROUP_ALLOWLIST_RAW = (process.env.TS_GROUP_ALLOWLIST || '').split(',').map((g) => g.trim()).filter(Boolean);
 const GROUP_WILDCARD = GROUP_ALLOWLIST_RAW.includes('*');
@@ -368,14 +373,17 @@ app.post('/api/writeback', (req, res) => {
 // server is localhost-only; front it with real auth before exposing the tunnel anywhere lasting.
 const WEBHOOK_BUFFER_MAX = 50;
 const webhookEvents = []; // newest first, capped at WEBHOOK_BUFFER_MAX
+// Attachment bytes live out-of-band so /api/webhook/events stays a small JSON response. Keyed by
+// `${recId}/${fileId}`; entries are dropped when their event falls out of the ring buffer.
+const webhookFiles = new Map(); // key -> { filename, contentType, buffer }
 
-/** Verify ThoughtSpot's HMAC_SHA256 signature over the raw body. Tolerant of hex/base64 + `sha256=` prefix. */
-function verifyWebhookSignature(req) {
+/** Verify ThoughtSpot's HMAC_SHA256 signature over the raw body bytes. Tolerant of hex/base64 + `sha256=` prefix. */
+function verifyWebhookSignature(req, raw) {
   if (!WEBHOOK_SECRET) return { verified: false, reason: 'no shared secret configured (TS_WEBHOOK_SECRET unset)' };
   const sent = String(req.get(WEBHOOK_SIG_HEADER) || '').trim().replace(/^sha256=/i, '');
   if (!sent) return { verified: false, reason: `no signature header (${WEBHOOK_SIG_HEADER})` };
-  const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
-  const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(raw).digest();
+  const bytes = raw || Buffer.from(JSON.stringify(req.body || {}));
+  const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(bytes).digest();
   // ThoughtSpot's encoding (hex vs base64) can vary by config — accept either, compared in constant time.
   const ok = [digest.toString('hex'), digest.toString('base64')].some((c) => {
     try { return c.length === sent.length && crypto.timingSafeEqual(Buffer.from(c), Buffer.from(sent)); }
@@ -384,26 +392,74 @@ function verifyWebhookSignature(req) {
   return { verified: ok, reason: ok ? 'HMAC_SHA256 verified' : 'signature mismatch' };
 }
 
-app.post('/api/webhook', (req, res) => {
+// Fail-closed gate — refuse before buffering any (potentially large multipart) body.
+function requireWebhookSink(_req, res, next) {
   if (!ALLOW_WEBHOOK_SINK) {
     return res.status(403).json({ error: 'Webhook sink is disabled. Set TS_ALLOW_WEBHOOK_SINK=true to enable this demo receiver.' });
   }
-  const sig = verifyWebhookSignature(req);
-  const body = req.body || {};
+  next();
+}
+// Only multipart deliveries are buffered as raw bytes here; JSON deliveries were already parsed by
+// the global express.json (this middleware is a no-op for them, so req.rawBody still applies).
+const captureMultipart = express.raw({ type: 'multipart/form-data', limit: WEBHOOK_MULTIPART_LIMIT });
+
+app.post('/api/webhook', requireWebhookSink, captureMultipart, (req, res) => {
+  const ctype = String(req.get('content-type') || '');
+  const isMultipart = /multipart\/form-data/i.test(ctype) && Buffer.isBuffer(req.body);
+
+  const recId = `whk-${Date.now()}-${webhookEvents.length}`;
+  let payload = {};
+  let files = [];         // UI-facing metadata (no bytes)
+  let rawBytes;
+
+  if (isMultipart) {
+    rawBytes = req.body; // express.raw gives us the exact bytes ThoughtSpot signed
+    const parts = parseMultipart(req.body, boundaryOf(ctype));
+    const split = splitMultipart(parts);
+    payload = split.meta || {};
+    files = split.files.map((f, i) => {
+      const fileId = String(i);
+      webhookFiles.set(`${recId}/${fileId}`, {
+        filename: f.filename || `attachment-${i}`,
+        contentType: f.contentType || 'application/octet-stream',
+        buffer: f.data,
+      });
+      return {
+        fileId,
+        field: f.name || null,
+        filename: f.filename || `attachment-${i}`,
+        contentType: f.contentType || 'application/octet-stream',
+        size: f.data.length,
+        href: `/api/webhook/file/${encodeURIComponent(recId)}/${fileId}`,
+      };
+    });
+  } else {
+    rawBytes = req.rawBody;
+    payload = req.body || {};
+  }
+
+  const sig = verifyWebhookSignature(req, rawBytes);
   // ThoughtSpot nests the meaningful payload under `data`; surface a couple of fields for the UI.
-  const data = body.data || body;
+  const data = payload.data || payload;
   const rec = {
-    id: `whk-${Date.now()}-${webhookEvents.length}`,
+    id: recId,
     receivedAt: new Date().toISOString(),
     verified: sig.verified,
     verifyReason: sig.reason,
-    notificationType: data.notificationType || body.event || body.eventType || null,
-    payload: body,
+    notificationType: data.notificationType || payload.event || payload.eventType || null,
+    delivery: isMultipart ? 'multipart' : 'json',
+    files,
+    payload,
   };
   webhookEvents.unshift(rec);
-  if (webhookEvents.length > WEBHOOK_BUFFER_MAX) webhookEvents.length = WEBHOOK_BUFFER_MAX;
-  console.log(`[webhook] received ${rec.notificationType || '(event)'} @ ${rec.receivedAt} — ${sig.reason}`);
-  res.json({ ok: true, verified: sig.verified });
+  // Evict overflow and free the attachment bytes of dropped events.
+  if (webhookEvents.length > WEBHOOK_BUFFER_MAX) {
+    webhookEvents.splice(WEBHOOK_BUFFER_MAX).forEach((old) => {
+      (old.files || []).forEach((f) => webhookFiles.delete(`${old.id}/${f.fileId}`));
+    });
+  }
+  console.log(`[webhook] received ${rec.notificationType || '(event)'} (${rec.delivery}, ${files.length} file(s)) @ ${rec.receivedAt} — ${sig.reason}`);
+  res.json({ ok: true, verified: sig.verified, files: files.length });
 });
 
 // Read-back for the UI's Webhook Inbox (localhost-only; returns empty when the sink is disabled).
@@ -415,10 +471,23 @@ app.get('/api/webhook/events', (_req, res) => {
   });
 });
 
+// Download a delivered report attachment — this is "what that recipient actually got".
+app.get('/api/webhook/file/:recId/:fileId', (req, res) => {
+  if (!ALLOW_WEBHOOK_SINK) return res.status(403).json({ error: 'Webhook sink is disabled.' });
+  const entry = webhookFiles.get(`${req.params.recId}/${req.params.fileId}`);
+  if (!entry) return res.status(404).json({ error: 'No such attachment (it may have aged out of the buffer).' });
+  res.setHeader('Content-Type', entry.contentType);
+  // Quote the filename and strip control/quote chars so the header can't be broken by a crafted name.
+  const safeName = String(entry.filename).replace(/[^\w.\- ]+/g, '_');
+  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  res.send(entry.buffer);
+});
+
 // Clear the in-memory buffer (the UI's "Clear" button on the Webhooks tab).
 app.delete('/api/webhook/events', (_req, res) => {
   if (!ALLOW_WEBHOOK_SINK) return res.status(403).json({ error: 'Webhook sink is disabled.' });
   webhookEvents.length = 0;
+  webhookFiles.clear();
   res.json({ ok: true });
 });
 

@@ -68,6 +68,36 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   alongside QA, collide with `EADDRINUSE` and produce phantom reds). Only one agent runs them at
   a time; M8 tracks making them parallel-safe.
 
+## Webhooks (S12)
+
+- 2026-07-14 (S12, this PR): **scheduled-Liveboard webhook batching is a permission-model
+  consequence, not a bug.** ThoughtSpot renders the report per recipient: an **internal (`USER`)**
+  recipient's report runs *as that user* (their RLS) → a personalized render → **one webhook each**,
+  and an RLS-blocked user → empty render → **no webhook**; **external (`EXTERNAL_EMAIL`)** recipients
+  share one render under the **schedule owner's** permissions → **one batched webhook**. Groups expand
+  to per-user webhooks. Triggering is **Send now** / cadence (no REST "run now"); schedules are
+  creatable via `POST /api/rest/2.0/schedules/create` (`recipient_details.emails` / `.principals`).
+- 2026-07-14 (S12): the receiver stores `data = payload.data || payload` and the inbox renderer reads
+  the **full `payload`** — so a `LIVEBOARD_SCHEDULE` renderer must read defensively (top-level
+  `eventType` OR `data.notificationType`, and `payload.data.recipients`). HMAC verify is over the
+  **raw request bytes**, so a replay that signs the exact bytes it POSTs gets ✓ verified — this is how
+  `scripts/simulate-webhook.mjs` produces verified deliveries. Verification is **advisory**: a
+  bad/missing signature is still stored and shown, flagged ⚠.
+- 2026-07-14 (S12): **real scheduled-Liveboard webhooks to a plain endpoint arrive as
+  `multipart/form-data`** — a JSON metadata part **plus the rendered report as a binary file
+  attachment** (PDF/CSV/XLSX); only *storage-destination* (GCS/S3) configs send pure JSON with file
+  links. The JSON-only `express.json` receiver could not capture the file, so the receiver was made
+  multipart-aware: `lib/multipart.js` (dependency-free, binary-safe parser) + `server.js` uses
+  `express.raw({type:'multipart/form-data'})` to get raw bytes, `parseMultipart`/`splitMultipart` to
+  extract `{meta, files}`, keeps file bytes out-of-band in a `webhookFiles` Map (evicted with the
+  50-event ring), and serves them at `GET /api/webhook/file/:recId/:fileId`. HMAC is verified over the
+  raw multipart bytes. `server.js` is guard-protected, so this change needs the human-approved label.
+- 2026-07-14 (S12): the "RLS-blocked user got no webhook" signal is inferred, not in the payload —
+  the inbox summary diffs `scheduleDetails.userIds` (directly-named users) against delivered `USER`
+  ids. It can't see **group-expanded** members (their ids aren't in `userIds`), so for the live test
+  name the blocked user **directly** on the schedule. The email-vs-webhook check disambiguates
+  expected-RLS from a webhook defect (email fails too → by design; email succeeds → likely a bug).
+
 ## Upstream / SDK
 
 - 2026-07-10 (W2): the ts-watch detector reports SDK versions 1.49.1–1.50.0 newer than the pinned

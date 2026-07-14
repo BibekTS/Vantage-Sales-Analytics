@@ -168,6 +168,14 @@
               </div>
             </div>
           </div>
+          <div class="st st-connecting">
+            <div class="st-spinner"></div>
+            <div class="st-title">Connecting to ThoughtSpot…</div>
+            <div class="st-sub" id="connecting-sub"></div>
+            <!-- Live phase checklist so the (potentially slow) REST discovery in connect() visibly
+                 shows progress instead of leaving the stage on the "not connected" walkthrough. -->
+            <div class="st-progress" id="connecting-steps"></div>
+          </div>
           <div class="st st-loading">
             <div class="st-spinner"></div>
             <div class="st-title">Loading embed…</div>
@@ -209,7 +217,16 @@
           <div class="bp-pane" id="pane-code"><pre id="code-view" class="code-view"></pre></div>
           <div class="bp-pane" id="pane-flow"><div id="flow-diagram" class="flow"></div></div>
           <div class="bp-pane" id="pane-apis"><div class="log-empty">Connect and render an embed to see the APIs in use.</div></div>
-          <div class="bp-pane" id="pane-webhook"><div id="wh-list" class="wh-list"><div class="log-empty">Open the Webhooks tab to receive ThoughtSpot webhook deliveries here.</div></div></div>
+          <div class="bp-pane" id="pane-webhook">
+            <div class="wh-toolbar">
+              <button id="wh-compose-toggle" class="bp-mini">＋ Compose delivery</button>
+              <button id="wh-apis-toggle" class="bp-mini" aria-expanded="false">⚯ APIs used</button>
+              <span class="wh-toolbar-hint">Scheduled-Liveboard webhook deliveries land here — one per recipient.</span>
+            </div>
+            <div id="wh-composer" class="wh-composer" hidden></div>
+            <div id="wh-apis" class="wh-apis" hidden></div>
+            <div id="wh-list" class="wh-list"><div class="wh-empty"><div class="wh-empty-title">Waiting for a delivery…</div><div class="wh-empty-sub">Trigger a schedule (Send now), or click ＋ Compose delivery. Setup: docs/webhook-inbox-demo.md.</div></div></div>
+          </div>
         </div>
       </section>
     </main>
@@ -241,6 +258,24 @@
       <button class="modal-close" data-close="auth">✕</button>
     </div>
     <div id="auth-body" class="modal-body"></div>
+  </div>
+</div>
+
+<!-- ── Raw webhook payload viewer (centered dialog) ─────────────────────── -->
+<div id="payload-modal" class="modal" hidden>
+  <div class="modal-scrim" data-close="payload"></div>
+  <div class="modal-panel modal-panel--center wh-payload-panel">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Raw webhook payload</div>
+        <div id="wh-payload-sub" class="modal-sub"></div>
+      </div>
+      <div class="wh-payload-head-actions">
+        <button id="wh-payload-copy" class="bp-mini">Copy</button>
+        <button class="modal-close" data-close="payload" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="modal-body"><pre id="wh-payload-pre" class="wh-payload-modal"></pre></div>
   </div>
 </div>
 

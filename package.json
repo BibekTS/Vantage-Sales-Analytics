@@ -13,6 +13,8 @@
     "boot-check": "node scripts/boot-check.mjs",
     "vendor-sdk": "node scripts/vendor-sdk.mjs",
     "register-webhook": "node scripts/register-webhook.mjs",
+    "schedule-liveboard": "node scripts/schedule-liveboard.mjs",
+    "simulate-webhook": "node scripts/simulate-webhook.mjs",
     "check-ts-updates": "node scripts/check-ts-updates.mjs"
   },
   "engines": {
