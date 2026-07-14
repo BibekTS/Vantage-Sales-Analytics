@@ -1209,7 +1209,7 @@ function batchingSummary(events) {
 // synthetic placeholder attachment. It deliberately does NOT call the export API (report/liveboard) —
 // that renders as YOU, not per-recipient, so it can't represent RLS. Genuine per-user RLS renders come
 // only from a real ThoughtSpot schedule. Browser-sent deliveries are unsigned → shown ⚠ unverified.
-const composer = { emails: [], users: [], groups: [], blocked: [] };
+const composer = { emails: [], users: [], groups: [], blocked: [], message: '' };
 let composerBuilt = false;
 
 // A minimal valid single-page PDF as raw bytes (so the attachment opens in a browser).
@@ -1295,6 +1295,7 @@ function buildComposer(panel) {
   composer.users = ['wmoy_test_2'];
   composer.groups = [{ name: 'wmoy_test_2_group', n: 2 }];
   composer.blocked = ['wmoy_test_3'];
+  composer.message = 'Your scheduled Liveboard update from the Embed Playground demo.';
 
   panel.replaceChildren();
 
@@ -1351,6 +1352,22 @@ function buildComposer(panel) {
   field('Internal users', 'users', { ph: 'wmoy_test_2', hint: 'one webhook each' });
   field('Groups', 'groups', { ph: 'group name', num: true, hint: 'expanded per member' });
   field('RLS-blocked', 'blocked', { ph: 'wmoy_test_3', hint: 'named, but get no webhook' });
+
+  // Email message → the schedule's `description`, which ThoughtSpot renders as "Description: <text>"
+  // in the notification email (real deliveries only). The rest of the email is ThoughtSpot's template.
+  const msg = el('div', 'wh-comp-msg');
+  const msgLab = el('label', 'wh-comp-label');
+  const msgT = el('span', 'wh-comp-label-t'); msgT.textContent = 'Email message';
+  const msgH = el('span', 'wh-comp-label-h'); msgH.textContent = 'shown as “Description:” in the email (real deliveries)';
+  msgLab.append(msgT, msgH);
+  const msgInput = document.createElement('textarea');
+  msgInput.className = 'wh-comp-msg-input';
+  msgInput.rows = 2;
+  msgInput.placeholder = 'e.g. Your weekly Capstone sales summary — reply with any questions.';
+  msgInput.value = composer.message || '';
+  msgInput.addEventListener('input', () => { composer.message = msgInput.value; });
+  msg.append(msgLab, msgInput);
+  panel.appendChild(msg);
 
   const preview = el('div', 'wh-comp-preview');
   panel.appendChild(preview);
@@ -1474,12 +1491,14 @@ async function composerSendReal() {
   const schedName = `Webhook demo — ${lbName} — ${Date.now()}`;
   const body = {
     name: schedName,
-    description: 'Created from the Embed Playground webhook composer to demo per-recipient webhook delivery.',
+    // description is REQUIRED and is the ONLY custom text ThoughtSpot puts in the email ("Description: …").
+    description: (composer.message || '').trim() || 'Scheduled Liveboard update from the Embed Playground.',
     metadata_type: 'LIVEBOARD',
     metadata_identifier: lbId,
     file_format: 'PDF',
     time_zone: 'Etc/UTC',
     frequency: { cron_expression: { second: '0', minute: String(minute), hour: String(hour), day_of_month: String(t.getUTCDate()), month: '*', day_of_week: '?' } },
+    // pdf_options.page_footer_text also accepts custom text (in the attached PDF's footer).
     recipient_details: { ...(emails.length ? { emails } : {}), ...(principals.length ? { principals } : {}) },
     pdf_options: { complete_liveboard: true, include_cover_page: true, include_page_number: true },
   };
