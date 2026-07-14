@@ -553,6 +553,7 @@ const REST_RELAY_ALLOW = new Set([
   '/api/rest/2.0/tags/create',
   '/api/rest/2.0/tags/assign',
   '/api/rest/2.0/auth/session/user',
+  '/api/rest/2.0/schedules/create', // webhook composer → create a real Liveboard schedule (caller's token)
 ]);
 app.post('/api/ts-rest', rateLimiter({ windowMs: 60_000, max: 120 }), async (req, res) => {
   try {

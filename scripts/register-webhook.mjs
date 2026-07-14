@@ -62,7 +62,8 @@ ok(`Signing     : ${WEBHOOK_SECRET ? `HMAC_SHA256 via ${SIG_HEADER}` : 'none (se
 // ── build the create body (shape per docs: webhooks/create) ─────────────────────────────────────
 const body = { name: NAME, description: 'Embed Playground demo receiver', url: URL_TARGET, events: [EVENT] };
 if (WEBHOOK_SECRET) {
-  body.signature_verification = { type: 'HMAC_SHA256', header: SIG_HEADER, algorithm: 'HMAC_SHA256', secret: WEBHOOK_SECRET };
+  // Per webhooks/create schema: type enum is HMAC_SHA256; algorithm enum is SHA256 (NOT HMAC_SHA256).
+  body.signature_verification = { type: 'HMAC_SHA256', header: SIG_HEADER, algorithm: 'SHA256', secret: WEBHOOK_SECRET };
 }
 
 if (DRY) {

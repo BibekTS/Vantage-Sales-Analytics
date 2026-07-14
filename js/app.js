@@ -1267,10 +1267,11 @@ function composerPlan() {
 
 // Live preview strip + Send-button label/enablement — recomputed on every recipient edit so the
 // batching outcome is visible before you fire anything.
-function updateComposerPreview(preview, send) {
+function updateComposerPreview(preview, send, real) {
   const p = composerPlan();
-  send.textContent = p.total ? `Send ${p.total} deliver${p.total === 1 ? 'y' : 'ies'}` : 'Send deliveries';
+  send.textContent = p.total ? `Simulate ${p.total}` : 'Simulate';
   send.disabled = p.total === 0;
+  if (real) real.disabled = p.total === 0;
 
   preview.replaceChildren();
   const arrow = el('span', 'wh-comp-preview-arrow'); arrow.textContent = '→';
@@ -1356,13 +1357,18 @@ function buildComposer(panel) {
 
   const actions = el('div', 'wh-comp-actions');
   const send = el('button', 'wh-comp-send');
+  send.title = 'Post synthetic deliveries to the local receiver — shows the fan-out shape only (⚠ unverified)';
   send.addEventListener('click', composerSend);
+  const real = el('button', 'wh-comp-real');
+  real.textContent = '⚡ Fire real delivery';
+  real.title = 'Create a REAL ThoughtSpot schedule for the selected Liveboard + these recipients, then Send now';
+  real.addEventListener('click', composerSendReal);
   const note = el('span', 'wh-comp-note');
-  note.textContent = 'Fires simulated webhook deliveries at the local receiver to show the fan-out shape — external batched, users per-webhook, groups expanded, blocked skipped. Each carries a placeholder file; it does NOT call the export API and does NOT reproduce per-user RLS — a real ThoughtSpot schedule does that. Browser-sent → ⚠ unverified.';
-  actions.append(send, note);
+  note.textContent = '“Simulate” posts synthetic deliveries to the local receiver (fan-out shape only, ⚠ unverified). “⚡ Fire real delivery” creates a REAL ThoughtSpot schedule for the selected Liveboard + these recipients (needs a Trusted-token connection; the users/groups/emails must exist on the instance) — then you click Send now in ThoughtSpot to fire it → genuine per-recipient RLS webhooks, ✓ verified.';
+  actions.append(send, real, note);
   panel.appendChild(actions);
 
-  refresh = () => updateComposerPreview(preview, send);
+  refresh = () => updateComposerPreview(preview, send, real);
   refresh();
 }
 
@@ -1432,6 +1438,73 @@ async function composerSend() {
   toast(`Fired ${sent} simulated deliver${sent === 1 ? 'y' : 'ies'}${composer.blocked.length ? ` · ${composer.blocked.length} blocked → none` : ''}`, 'success');
   startWebhookPolling();
   fetchWebhookEvents();
+}
+
+// Create a REAL ThoughtSpot schedule for the app-selected Liveboard + the composed recipients, then
+// point the user at Send now. Unlike composerSend (a local simulation), this produces genuine
+// per-recipient RLS deliveries — but ThoughtSpot has NO REST "run now", so firing is one Send-now
+// click in ThoughtSpot. Needs a trusted-auth session (the relay forwards the caller's own token).
+async function composerSendReal() {
+  const s = getState();
+  const lbId = s.liveboardId;
+  if (!lbId) { toast('Select a Liveboard in the app first (Object section).', 'warn'); return; }
+  if (!Discovery.hasBearerToken()) {
+    toast('Real deliveries need a REST session — connect with “Auth: Trusted token”.', 'warn'); return;
+  }
+  const emails = [...composer.emails];
+  const principals = [
+    ...composer.users.map((u) => ({ identifier: u, type: 'USER' })),
+    ...composer.blocked.map((b) => ({ identifier: b, type: 'USER' })), // named on the schedule; RLS yields no webhook
+    ...composer.groups.map((g) => ({ identifier: g.name, type: 'USER_GROUP' })),
+  ];
+  if (!emails.length && !principals.length) { toast('Add at least one recipient first', 'warn'); return; }
+
+  const lbName = (discovered.liveboards || []).find((l) => l.id === lbId)?.name || 'Liveboard';
+  const schedName = `Webhook demo — ${lbName} — ${Date.now()}`;
+  const body = {
+    name: schedName,
+    description: 'Created from the Embed Playground webhook composer to demo per-recipient webhook delivery.',
+    metadata_type: 'LIVEBOARD',
+    metadata_identifier: lbId,
+    file_format: 'PDF',
+    time_zone: 'Etc/UTC',
+    frequency: { cron_expression: { second: '0', minute: '0', hour: '8', day_of_month: '*', month: '*', day_of_week: '?' } },
+    recipient_details: { ...(emails.length ? { emails } : {}), ...(principals.length ? { principals } : {}) },
+    pdf_options: { complete_liveboard: true, include_cover_page: true, include_page_number: true },
+  };
+
+  const done = showBusy('Creating a real ThoughtSpot schedule…');
+  const res = await Discovery.createSchedule(s.host, body);
+  if (!res.ok) {
+    done(`Schedule failed: ${res.error}`, 'error');
+    logEvent('Webhook', `✗ schedules/create: ${res.error}`);
+    return;
+  }
+  done('Real schedule created — click Send now in ThoughtSpot', 'success');
+  logEvent('Webhook', `✓ schedule "${schedName}" created (${res.id || 'id n/a'})`);
+
+  // Deep-link to the Liveboard so they can Send now — ThoughtSpot has no REST trigger.
+  const host = (s.host || '').replace(/\/+$/, '');
+  if (host && lbId) { try { window.open(`${host}/#/pinboard/${lbId}`, '_blank', 'noopener'); } catch (_) {} }
+  showRealScheduleHint(schedName);
+  startWebhookPolling();
+}
+
+// Inline "now Send now" instructions shown in the composer after a real schedule is created.
+function showRealScheduleHint(schedName) {
+  const panel = $('#wh-composer');
+  if (!panel) return;
+  let hint = panel.querySelector('.wh-comp-realhint');
+  if (!hint) { hint = el('div', 'wh-comp-realhint'); panel.appendChild(hint); }
+  hint.replaceChildren();
+  const t = el('div', 'wh-comp-realhint-t'); t.textContent = '✓ Real schedule created — now fire it:';
+  const ol = el('ol', 'wh-comp-realhint-ol');
+  [
+    'In the ThoughtSpot tab that just opened, open this Liveboard’s Schedules (the ⋯ menu or the schedule icon).',
+    `Find the schedule “${schedName}”.`,
+    'Click Send now. Real per-recipient webhooks (✓ verified) land in this inbox within seconds.',
+  ].forEach((step) => { const li = el('li'); li.textContent = step; ol.appendChild(li); });
+  hint.append(t, ol);
 }
 
 function genericBody(payload) {

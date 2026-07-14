@@ -83,6 +83,18 @@ async function restError(resp) {
   return detail;
 }
 
+/**
+ * Create a Liveboard schedule — the webhook composer's "Fire real delivery" flow. Relayed through
+ * the local server with the caller's OWN token (never mints), so it only works with a REST-capable
+ * session (trusted-auth bearer token). Returns { ok, id, name } or { ok:false, error, status }.
+ */
+export async function createSchedule(host, body) {
+  const resp = await apiRest(host, '/api/rest/2.0/schedules/create', { method: 'POST', body });
+  if (!resp.ok) return { ok: false, error: await restError(resp), status: resp.status };
+  const data = await resp.json().catch(() => ({}));
+  return { ok: true, id: data?.id || data?.identifier || null, name: body?.name || null };
+}
+
 /** Verify the session and return the current user + org. */
 export async function discoverOrg(host) {
   try {
