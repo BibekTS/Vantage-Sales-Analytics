@@ -1364,7 +1364,7 @@ function buildComposer(panel) {
   real.title = 'Create a REAL ThoughtSpot schedule for the selected Liveboard + these recipients, then Send now';
   real.addEventListener('click', composerSendReal);
   const note = el('span', 'wh-comp-note');
-  note.textContent = '“Simulate” posts synthetic deliveries to the local receiver (fan-out shape only, ⚠ unverified). “⚡ Fire real delivery” creates a REAL ThoughtSpot schedule for the selected Liveboard + these recipients (needs a Trusted-token connection; the users/groups/emails must exist on the instance) — then you click Send now in ThoughtSpot to fire it → genuine per-recipient RLS webhooks, ✓ verified.';
+  note.textContent = '“Simulate” posts synthetic deliveries to the local receiver (fan-out shape only, ⚠ unverified). “⚡ Fire real delivery” creates a REAL ThoughtSpot schedule for the selected Liveboard + these recipients (needs a Trusted-token connection; the users/groups/emails must exist on the instance) that AUTO-FIRES at the next 5-minute mark — no Send-now click; the email(s) and webhook arrive together, ✓ verified.';
   actions.append(send, real, note);
   panel.appendChild(actions);
 
@@ -1440,10 +1440,11 @@ async function composerSend() {
   fetchWebhookEvents();
 }
 
-// Create a REAL ThoughtSpot schedule for the app-selected Liveboard + the composed recipients, then
-// point the user at Send now. Unlike composerSend (a local simulation), this produces genuine
-// per-recipient RLS deliveries — but ThoughtSpot has NO REST "run now", so firing is one Send-now
-// click in ThoughtSpot. Needs a trusted-auth session (the relay forwards the caller's own token).
+// Create a REAL ThoughtSpot schedule for the app-selected Liveboard + composed recipients, set to
+// AUTO-FIRE at the next 5-minute mark — so no Send-now click is needed; it runs on its own within a
+// few minutes and sends the email(s) AND the webhook together. ThoughtSpot's cadence minute must be a
+// multiple of 5 (there's no REST "run now" and no sub-5-min granularity), so that's the fastest
+// hands-off option. Needs a trusted-auth session (the relay forwards the caller's own token).
 async function composerSendReal() {
   const s = getState();
   const lbId = s.liveboardId;
@@ -1459,6 +1460,16 @@ async function composerSendReal() {
   ];
   if (!emails.length && !principals.length) { toast('Add at least one recipient first', 'warn'); return; }
 
+  // Next 5-minute boundary in UTC with ≥60s lead so the scheduler reliably catches it. Pin the
+  // day-of-month to that date so it fires once soon (then only monthly), not every single day.
+  let t = new Date(Date.now() + 60 * 1000);
+  t.setUTCSeconds(0, 0);
+  t.setUTCMinutes(Math.ceil(t.getUTCMinutes() / 5) * 5);
+  if (t.getTime() - Date.now() < 60 * 1000) t = new Date(t.getTime() + 5 * 60 * 1000);
+  const hour = t.getUTCHours(), minute = t.getUTCMinutes();
+  const fireHM = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} UTC`;
+  const mins = Math.max(1, Math.round((t.getTime() - Date.now()) / 60000));
+
   const lbName = (discovered.liveboards || []).find((l) => l.id === lbId)?.name || 'Liveboard';
   const schedName = `Webhook demo — ${lbName} — ${Date.now()}`;
   const body = {
@@ -1468,43 +1479,43 @@ async function composerSendReal() {
     metadata_identifier: lbId,
     file_format: 'PDF',
     time_zone: 'Etc/UTC',
-    frequency: { cron_expression: { second: '0', minute: '0', hour: '8', day_of_month: '*', month: '*', day_of_week: '?' } },
+    frequency: { cron_expression: { second: '0', minute: String(minute), hour: String(hour), day_of_month: String(t.getUTCDate()), month: '*', day_of_week: '?' } },
     recipient_details: { ...(emails.length ? { emails } : {}), ...(principals.length ? { principals } : {}) },
     pdf_options: { complete_liveboard: true, include_cover_page: true, include_page_number: true },
   };
 
-  const done = showBusy('Creating a real ThoughtSpot schedule…');
+  const done = showBusy('Creating a real auto-firing schedule…');
   const res = await Discovery.createSchedule(s.host, body);
   if (!res.ok) {
     done(`Schedule failed: ${res.error}`, 'error');
     logEvent('Webhook', `✗ schedules/create: ${res.error}`);
     return;
   }
-  done('Real schedule created — click Send now in ThoughtSpot', 'success');
-  logEvent('Webhook', `✓ schedule "${schedName}" created (${res.id || 'id n/a'})`);
-
-  // Deep-link to the Liveboard so they can Send now — ThoughtSpot has no REST trigger.
-  const host = (s.host || '').replace(/\/+$/, '');
-  if (host && lbId) { try { window.open(`${host}/#/pinboard/${lbId}`, '_blank', 'noopener'); } catch (_) {} }
-  showRealScheduleHint(schedName);
+  done(`Scheduled — auto-fires ~${fireHM} (~${mins} min), no click needed`, 'success');
+  logEvent('Webhook', `✓ schedule "${schedName}" auto-fires ${fireHM} (${res.id || 'id n/a'})`);
+  showRealScheduleHint(schedName, fireHM, mins, s.host, lbId);
   startWebhookPolling();
 }
 
-// Inline "now Send now" instructions shown in the composer after a real schedule is created.
-function showRealScheduleHint(schedName) {
+// Inline confirmation shown in the composer after a real auto-firing schedule is created.
+function showRealScheduleHint(schedName, fireHM, mins, host, lbId) {
   const panel = $('#wh-composer');
   if (!panel) return;
   let hint = panel.querySelector('.wh-comp-realhint');
   if (!hint) { hint = el('div', 'wh-comp-realhint'); panel.appendChild(hint); }
   hint.replaceChildren();
-  const t = el('div', 'wh-comp-realhint-t'); t.textContent = '✓ Real schedule created — now fire it:';
-  const ol = el('ol', 'wh-comp-realhint-ol');
-  [
-    'In the ThoughtSpot tab that just opened, open this Liveboard’s Schedules (the ⋯ menu or the schedule icon).',
-    `Find the schedule “${schedName}”.`,
-    'Click Send now. Real per-recipient webhooks (✓ verified) land in this inbox within seconds.',
-  ].forEach((step) => { const li = el('li'); li.textContent = step; ol.appendChild(li); });
-  hint.append(t, ol);
+  const t = el('div', 'wh-comp-realhint-t');
+  t.textContent = `✓ Real schedule created — auto-fires at ~${fireHM} (~${mins} min). No Send-now needed.`;
+  const b = el('div', 'wh-comp-realhint-b');
+  b.textContent = 'Keep this tab open and watch the inbox — the email(s) and the webhook (✓ verified) fire together when it runs. Don’t want to wait? Open the Liveboard’s Schedules and click Send now for an instant fire.';
+  hint.append(t, b);
+  const h = (host || '').replace(/\/+$/, '');
+  if (h && lbId) {
+    const a = document.createElement('a');
+    a.className = 'wh-link'; a.href = `${h}/#/pinboard/${lbId}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'Open Liveboard → Send now (instant)';
+    hint.appendChild(a);
+  }
 }
 
 function genericBody(payload) {
