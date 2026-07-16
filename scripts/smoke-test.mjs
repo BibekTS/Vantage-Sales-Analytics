@@ -12,6 +12,7 @@
  *   ✓ the filter-values proxy refuses callers with no bearer token (never mints an admin one)
  *   ✓ the ts-rest relay rejects non-allowlisted paths and tokenless callers (never mints)
  *   ✓ the write-back stub is refused unless TS_ALLOW_DEV_PROXY=true
+ *   ✓ the webhook receiver is refused unless TS_ALLOW_WEBHOOK_SINK=true
  */
 
 import { spawn } from 'node:child_process';
@@ -33,6 +34,7 @@ const env = {
   TS_ALLOW_JIT: '',             // fail-closed
   TS_GROUP_ALLOWLIST: '',       // fail-closed
   TS_ALLOW_DEV_PROXY: '',       // fail-closed
+  TS_ALLOW_WEBHOOK_SINK: '',    // fail-closed
 };
 
 const results = [];
@@ -150,6 +152,12 @@ try {
   {
     const r = await postJson('/api/writeback', { hello: 'world' });
     check('write-back stub refused when disabled → 403', r.status === 403, `status ${r.status}`);
+  }
+
+  // 8) The webhook receiver is opt-in too — it must never accept data when the sink is disabled.
+  {
+    const r = await postJson('/api/webhook', { data: { notificationType: 'TEST' } });
+    check('webhook sink refused when disabled → 403', r.status === 403, `status ${r.status}`);
   }
 } finally {
   server.kill('SIGTERM');

@@ -41,6 +41,15 @@
          title="ThoughtSpot Visual Embed SDK documentation">SDK docs ↗</a>
       <a id="docs-btn" class="tb-icon-btn" href="docs/tse-best-practices.html" target="_blank" rel="noopener"
          title="ThoughtSpot Embedded — best-practices compendium (auth, ABAC/RLS, hardening, embed surface)">Best practices</a>
+      <div class="tb-menu">
+        <button id="display-btn" class="tb-icon-btn" aria-haspopup="true" aria-expanded="false" title="Show/hide optional panels">Display ▾</button>
+        <div id="display-pop" class="tb-menu-pop" role="menu" hidden>
+          <label class="tb-menu-item">
+            <input type="checkbox" id="toggle-wh-tab">
+            <span class="tb-menu-lbl">Webhooks tab <span class="bp-beta">beta</span></span>
+          </label>
+        </div>
+      </div>
       <button id="share-btn" class="tb-icon-btn" title="Copy a shareable link to the current setup" hidden>Share</button>
       <span class="tb-div" aria-hidden="true"></span>
       <button id="reset-btn" class="tb-icon-btn tb-reset" title="Reset all applied options">Reset</button>
@@ -168,6 +177,14 @@
               </div>
             </div>
           </div>
+          <div class="st st-connecting">
+            <div class="st-spinner"></div>
+            <div class="st-title">Connecting to ThoughtSpot…</div>
+            <div class="st-sub" id="connecting-sub"></div>
+            <!-- Live phase checklist so the (potentially slow) REST discovery in connect() visibly
+                 shows progress instead of leaving the stage on the "not connected" walkthrough. -->
+            <div class="st-progress" id="connecting-steps"></div>
+          </div>
           <div class="st st-loading">
             <div class="st-spinner"></div>
             <div class="st-title">Loading embed…</div>
@@ -196,6 +213,7 @@
             <button class="bp-tab" data-tab="code">&lt;/&gt; SDK Code</button>
             <button class="bp-tab" data-tab="flow">⟿ SDK Lifecycle</button>
             <button class="bp-tab" data-tab="apis">⚯ APIs Used</button>
+            <button id="wh-tab" class="bp-tab" data-tab="webhook" hidden><svg class="tab-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>Webhooks <span class="bp-beta">beta</span> <span id="wh-count" class="bp-count">0</span></button>
           </div>
           <div class="bp-head-r">
             <button id="copy-code" class="bp-mini" hidden>Copy</button>
@@ -208,6 +226,16 @@
           <div class="bp-pane" id="pane-code"><pre id="code-view" class="code-view"></pre></div>
           <div class="bp-pane" id="pane-flow"><div id="flow-diagram" class="flow"></div></div>
           <div class="bp-pane" id="pane-apis"><div class="log-empty">Connect and render an embed to see the APIs in use.</div></div>
+          <div class="bp-pane" id="pane-webhook">
+            <div class="wh-toolbar">
+              <button id="wh-compose-toggle" class="bp-mini">＋ Compose delivery</button>
+              <button id="wh-apis-toggle" class="bp-mini" aria-expanded="false">⚯ APIs used</button>
+              <span class="wh-toolbar-hint">Scheduled-Liveboard webhook deliveries land here — one per recipient.</span>
+            </div>
+            <div id="wh-composer" class="wh-composer" hidden></div>
+            <div id="wh-apis" class="wh-apis" hidden></div>
+            <div id="wh-list" class="wh-list"><div class="wh-empty"><div class="wh-empty-title">Waiting for a delivery…</div><div class="wh-empty-sub">Trigger a schedule (Send now), or click ＋ Compose delivery. Setup: docs/webhook-inbox-demo.md.</div></div></div>
+          </div>
         </div>
       </section>
     </main>
@@ -239,6 +267,58 @@
       <button class="modal-close" data-close="auth">✕</button>
     </div>
     <div id="auth-body" class="modal-body"></div>
+  </div>
+</div>
+
+<!-- ── Raw webhook payload viewer (centered dialog) ─────────────────────── -->
+<div id="payload-modal" class="modal" hidden>
+  <div class="modal-scrim" data-close="payload"></div>
+  <div class="modal-panel modal-panel--center wh-payload-panel">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Raw webhook payload</div>
+        <div id="wh-payload-sub" class="modal-sub"></div>
+      </div>
+      <div class="wh-payload-head-actions">
+        <button id="wh-payload-copy" class="bp-mini">Copy</button>
+        <button class="modal-close" data-close="payload" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="modal-body"><pre id="wh-payload-pre" class="wh-payload-modal"></pre></div>
+  </div>
+</div>
+
+<div id="email-modal" class="modal" hidden>
+  <div class="modal-scrim" data-close="email"></div>
+  <div class="modal-panel modal-panel--center wh-email-panel">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Compose per-recipient email</div>
+        <div id="wh-email-sub" class="modal-sub"></div>
+      </div>
+      <button class="modal-close" data-close="email" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body wh-email-body">
+      <div class="wh-email-editor">
+        <label class="wh-email-lbl">Subject
+          <input id="wh-email-subject" class="wh-email-input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="wh-email-lbl">Body
+          <textarea id="wh-email-body" class="wh-email-textarea" rows="6" spellcheck="false"></textarea>
+        </label>
+        <div class="wh-email-vars">Variables:
+          <code>{{recipient}}</code> <code>{{email}}</code> <code>{{liveboard}}</code> <code>{{date}}</code> <code>{{format}}</code>
+        </div>
+      </div>
+      <div class="wh-email-previews-wrap">
+        <div id="wh-email-count" class="wh-email-count"></div>
+        <div id="wh-email-previews" class="wh-email-previews"></div>
+      </div>
+    </div>
+    <div class="modal-foot wh-email-foot">
+      <span class="wh-email-note">Preview only — no mail transport is wired, so nothing is sent.</span>
+      <button id="wh-email-send" class="wh-email-send" disabled title="Preview only — wire an email transport (SMTP/SendGrid/SES) to enable sending">Send</button>
+    </div>
   </div>
 </div>
 
