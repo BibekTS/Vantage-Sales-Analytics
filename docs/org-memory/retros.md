@@ -24,3 +24,11 @@ This log is the raw material for org retrospectives (BACKLOG M2).
   THAT (a `connect()` reset) *introduced* a last-write-wins race that only `/code-review` then
   caught. Lesson: a correctness fix is itself an unverified diff; re-review after fixing, don't just
   re-run gates. No process/skill friction — the playbook's fix→re-verify loop worked as written.
+- 2026-07-13 (discover, parallel hunt ∥ drain): ran a find-only discovery hunt (4 lenses over the
+  embed/runtime-filter ground) concurrently with an active S3 drain — safe because hunters are
+  read-only and QA owned the gate ports. Multi-lens paid off twice: the correctness + data-integrity
+  lenses independently confirmed the same cfb string-epoch bug (S14), and the regression lens REFUTED
+  the correctness lens's low-confidence `onDone`-re-push suspicion by proving idempotency (dropped it
+  pre-filing). Friction: the S3 drain committed + merged (#17) mid-hunt under the shared checkout, so
+  the CEO re-read git state before filing and branched the records PR off the *post-#17* main — the
+  worktree discipline held. Filed S13–S17. No skill change needed.
