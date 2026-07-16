@@ -34,6 +34,8 @@
  *   GET  /api/auth/config    — non-sensitive bootstrap (never exposes the secret)
  *   POST /api/auth/token     — mint a full OR custom (ABAC) token (allowlist + JIT/group guarded, rate-limited)
  *   POST /api/writeback      — sink for the write-back custom action (stub; TS_ALLOW_DEV_PROXY)
+ *   POST /api/webhook        — receiver for ThoughtSpot webhooks (demo; TS_ALLOW_WEBHOOK_SINK, HMAC-verified)
+ *   GET/DELETE /api/webhook/events — read/clear the in-memory webhook inbox the UI polls
  *   POST /api/filter-values  — filter-value discovery using the CALLER'S bearer token (no minting)
  *   POST /api/ts-rest        — CORS relay for an allowlisted set of REST paths, using the CALLER'S token
  *   (static) /js /css /vendor /config.js /  — the frontend only
@@ -42,7 +44,9 @@
 
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
+const { boundaryOf, parseMultipart, splitMultipart } = require('./lib/multipart');
 
 // ── Node version guard (native fetch needs Node 18+) ────────────────────────────────────────
 if (typeof fetch === 'undefined') {
@@ -65,6 +69,16 @@ const truthy = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
 // Fail-closed dev guards (see SECURITY MODEL above).
 const ALLOW_JIT = truthy(process.env.TS_ALLOW_JIT);             // permit auto_create (allowlist bypass)
 const ALLOW_DEV_PROXY = truthy(process.env.TS_ALLOW_DEV_PROXY); // permit the /api/writeback stub sink
+// Webhook receiver demo (see /api/webhook). Fail-closed: OFF unless explicitly enabled, so it never
+// becomes an open, unauthenticated data sink. When a shared secret is set we verify ThoughtSpot's
+// HMAC_SHA256 signature (configured via signature_verification in webhooks/create).
+const ALLOW_WEBHOOK_SINK = truthy(process.env.TS_ALLOW_WEBHOOK_SINK);
+const WEBHOOK_SECRET = process.env.TS_WEBHOOK_SECRET || '';
+const WEBHOOK_SIG_HEADER = (process.env.TS_WEBHOOK_SIG_HEADER || 'x-ts-signature').toLowerCase();
+// Real scheduled-Liveboard deliveries arrive as multipart/form-data with the rendered report as a
+// binary attachment — cap the whole POST so a delivery can't exhaust memory (a Liveboard PDF is a
+// few MB; 30mb is generous). Override with TS_WEBHOOK_MAX_MB.
+const WEBHOOK_MULTIPART_LIMIT = `${Number(process.env.TS_WEBHOOK_MAX_MB) || 30}mb`;
 // '*' opts out of the group guard entirely (back to "any group"); otherwise an explicit set.
 const GROUP_ALLOWLIST_RAW = (process.env.TS_GROUP_ALLOWLIST || '').split(',').map((g) => g.trim()).filter(Boolean);
 const GROUP_WILDCARD = GROUP_ALLOWLIST_RAW.includes('*');
@@ -195,7 +209,9 @@ async function mintToken(params) {
 // ── App ────────────────────────────────────────────────────────────────────────────────────
 const app = express();
 app.set('trust proxy', true); // so req.ip reflects X-Forwarded-For when fronted by a proxy
-app.use(express.json({ limit: '256kb' }));
+// Capture the raw request bytes so the webhook receiver can verify ThoughtSpot's HMAC_SHA256
+// signature — the HMAC is computed over the exact payload bytes, not the re-serialized JSON.
+app.use(express.json({ limit: '256kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // If you prefer to keep the static frontend on VS Code Live Server (different origin), uncomment
 // the CORS block below and set `window.TS_API_BASE = 'http://localhost:3000'` in config.js.
@@ -210,6 +226,7 @@ app.get('/api/auth/config', (_req, res) => {
     allowlist: [...ALLOWLIST],
     orgId: DEFAULT_ORG_ID || null,
     secretConfigured,            // boolean only — the secret itself is never sent
+    webhookSink: ALLOW_WEBHOOK_SINK, // is the /api/webhook demo receiver enabled? (UI decides whether to poll)
     allowJit: ALLOW_JIT,
     groupGuard: GROUP_WILDCARD ? 'any' : (GROUP_ALLOWLIST.size ? [...GROUP_ALLOWLIST] : 'none'),
     validityDefault: VALIDITY_DEFAULT,
@@ -347,6 +364,133 @@ app.post('/api/writeback', (req, res) => {
   res.json({ ok: true, ticketId, receivedAt, received: req.body });
 });
 
+// ── Webhook receiver — opt-in dev sink for the "receive a ThoughtSpot webhook" demo ────────────
+// ThoughtSpot POSTs scheduled-report (LIVEBOARD_SCHEDULE) and KPI-monitor alert payloads here.
+// Fail-closed like /api/writeback: disabled unless TS_ALLOW_WEBHOOK_SINK=true, so it never becomes
+// an open, unauthenticated data sink by default. When TS_WEBHOOK_SECRET is set we verify the
+// HMAC_SHA256 signature ThoughtSpot sends (configured via signature_verification in webhooks/create).
+// Received events live in a small in-memory ring buffer for the UI to poll — nothing hits disk. The
+// server is localhost-only; front it with real auth before exposing the tunnel anywhere lasting.
+const WEBHOOK_BUFFER_MAX = 50;
+const webhookEvents = []; // newest first, capped at WEBHOOK_BUFFER_MAX
+// Attachment bytes live out-of-band so /api/webhook/events stays a small JSON response. Keyed by
+// `${recId}/${fileId}`; entries are dropped when their event falls out of the ring buffer.
+const webhookFiles = new Map(); // key -> { filename, contentType, buffer }
+
+/** Verify ThoughtSpot's HMAC_SHA256 signature over the raw body bytes. Tolerant of hex/base64 + `sha256=` prefix. */
+function verifyWebhookSignature(req, raw) {
+  if (!WEBHOOK_SECRET) return { verified: false, reason: 'no shared secret configured (TS_WEBHOOK_SECRET unset)' };
+  const sent = String(req.get(WEBHOOK_SIG_HEADER) || '').trim().replace(/^sha256=/i, '');
+  if (!sent) return { verified: false, reason: `no signature header (${WEBHOOK_SIG_HEADER})` };
+  const bytes = raw || Buffer.from(JSON.stringify(req.body || {}));
+  const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(bytes).digest();
+  // ThoughtSpot's encoding (hex vs base64) can vary by config — accept either, compared in constant time.
+  const ok = [digest.toString('hex'), digest.toString('base64')].some((c) => {
+    try { return c.length === sent.length && crypto.timingSafeEqual(Buffer.from(c), Buffer.from(sent)); }
+    catch { return false; }
+  });
+  return { verified: ok, reason: ok ? 'HMAC_SHA256 verified' : 'signature mismatch' };
+}
+
+// Fail-closed gate — refuse before buffering any (potentially large multipart) body.
+function requireWebhookSink(_req, res, next) {
+  if (!ALLOW_WEBHOOK_SINK) {
+    return res.status(403).json({ error: 'Webhook sink is disabled. Set TS_ALLOW_WEBHOOK_SINK=true to enable this demo receiver.' });
+  }
+  next();
+}
+// Only multipart deliveries are buffered as raw bytes here; JSON deliveries were already parsed by
+// the global express.json (this middleware is a no-op for them, so req.rawBody still applies).
+const captureMultipart = express.raw({ type: 'multipart/form-data', limit: WEBHOOK_MULTIPART_LIMIT });
+
+app.post('/api/webhook', requireWebhookSink, captureMultipart, (req, res) => {
+  const ctype = String(req.get('content-type') || '');
+  const isMultipart = /multipart\/form-data/i.test(ctype) && Buffer.isBuffer(req.body);
+
+  const recId = `whk-${Date.now()}-${webhookEvents.length}`;
+  let payload = {};
+  let files = [];         // UI-facing metadata (no bytes)
+  let rawBytes;
+
+  if (isMultipart) {
+    rawBytes = req.body; // express.raw gives us the exact bytes ThoughtSpot signed
+    const parts = parseMultipart(req.body, boundaryOf(ctype));
+    const split = splitMultipart(parts);
+    payload = split.meta || {};
+    files = split.files.map((f, i) => {
+      const fileId = String(i);
+      webhookFiles.set(`${recId}/${fileId}`, {
+        filename: f.filename || `attachment-${i}`,
+        contentType: f.contentType || 'application/octet-stream',
+        buffer: f.data,
+      });
+      return {
+        fileId,
+        field: f.name || null,
+        filename: f.filename || `attachment-${i}`,
+        contentType: f.contentType || 'application/octet-stream',
+        size: f.data.length,
+        href: `/api/webhook/file/${encodeURIComponent(recId)}/${fileId}`,
+      };
+    });
+  } else {
+    rawBytes = req.rawBody;
+    payload = req.body || {};
+  }
+
+  const sig = verifyWebhookSignature(req, rawBytes);
+  // ThoughtSpot nests the meaningful payload under `data`; surface a couple of fields for the UI.
+  const data = payload.data || payload;
+  const rec = {
+    id: recId,
+    receivedAt: new Date().toISOString(),
+    verified: sig.verified,
+    verifyReason: sig.reason,
+    notificationType: data.notificationType || payload.event || payload.eventType || null,
+    delivery: isMultipart ? 'multipart' : 'json',
+    files,
+    payload,
+  };
+  webhookEvents.unshift(rec);
+  // Evict overflow and free the attachment bytes of dropped events.
+  if (webhookEvents.length > WEBHOOK_BUFFER_MAX) {
+    webhookEvents.splice(WEBHOOK_BUFFER_MAX).forEach((old) => {
+      (old.files || []).forEach((f) => webhookFiles.delete(`${old.id}/${f.fileId}`));
+    });
+  }
+  console.log(`[webhook] received ${rec.notificationType || '(event)'} (${rec.delivery}, ${files.length} file(s)) @ ${rec.receivedAt} — ${sig.reason}`);
+  res.json({ ok: true, verified: sig.verified, files: files.length });
+});
+
+// Read-back for the UI's Webhook Inbox (localhost-only; returns empty when the sink is disabled).
+app.get('/api/webhook/events', (_req, res) => {
+  res.json({
+    enabled: ALLOW_WEBHOOK_SINK,
+    secretConfigured: Boolean(WEBHOOK_SECRET),
+    events: ALLOW_WEBHOOK_SINK ? webhookEvents : [],
+  });
+});
+
+// Download a delivered report attachment — this is "what that recipient actually got".
+app.get('/api/webhook/file/:recId/:fileId', (req, res) => {
+  if (!ALLOW_WEBHOOK_SINK) return res.status(403).json({ error: 'Webhook sink is disabled.' });
+  const entry = webhookFiles.get(`${req.params.recId}/${req.params.fileId}`);
+  if (!entry) return res.status(404).json({ error: 'No such attachment (it may have aged out of the buffer).' });
+  res.setHeader('Content-Type', entry.contentType);
+  // Quote the filename and strip control/quote chars so the header can't be broken by a crafted name.
+  const safeName = String(entry.filename).replace(/[^\w.\- ]+/g, '_');
+  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  res.send(entry.buffer);
+});
+
+// Clear the in-memory buffer (the UI's "Clear" button on the Webhooks tab).
+app.delete('/api/webhook/events', (_req, res) => {
+  if (!ALLOW_WEBHOOK_SINK) return res.status(403).json({ error: 'Webhook sink is disabled.' });
+  webhookEvents.length = 0;
+  webhookFiles.clear();
+  res.json({ ok: true });
+});
+
 // ── POST /api/filter-values — filter-value discovery using the CALLER'S OWN token ──────────────
 // Cookieless trusted-auth blocks the browser from calling TS REST cross-origin (CORS), so this
 // endpoint relays the call. It uses the bearer token the CALLER already holds — it does NOT mint
@@ -409,6 +553,7 @@ const REST_RELAY_ALLOW = new Set([
   '/api/rest/2.0/tags/create',
   '/api/rest/2.0/tags/assign',
   '/api/rest/2.0/auth/session/user',
+  '/api/rest/2.0/schedules/create', // webhook composer → create a real Liveboard schedule (caller's token)
 ]);
 app.post('/api/ts-rest', rateLimiter({ windowMs: 60_000, max: 120 }), async (req, res) => {
   try {
@@ -469,7 +614,8 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`     Allowlist        : ${[...ALLOWLIST].join(', ') || '(empty)'}`);
   console.log(`     JIT (auto_create): ${ALLOW_JIT ? 'ENABLED (TS_ALLOW_JIT)' : 'disabled (fail-closed)'}`);
   console.log(`     Group guard      : ${GROUP_WILDCARD ? 'ANY (TS_GROUP_ALLOWLIST=*)' : (GROUP_ALLOWLIST.size ? [...GROUP_ALLOWLIST].join(', ') : 'none allowed')}`);
-  console.log(`     Write-back stub  : ${ALLOW_DEV_PROXY ? 'enabled' : 'disabled'}\n`);
+  console.log(`     Write-back stub  : ${ALLOW_DEV_PROXY ? 'enabled' : 'disabled'}`);
+  console.log(`     Webhook sink     : ${ALLOW_WEBHOOK_SINK ? `enabled${WEBHOOK_SECRET ? ' (HMAC_SHA256 verify on)' : ' (no secret — unverified)'}` : 'disabled (fail-closed)'}\n`);
 });
 
 module.exports = app; // exported for the smoke test

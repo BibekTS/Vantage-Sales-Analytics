@@ -283,6 +283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderEmbedList();
   bindTopbar();
   bindBottomPanel();
+  bindDisplayMenu();
   bindStateOverlay();
   // When a trusted-auth token is minted & applied, feed it to REST discovery so object lists
   // populate for token-only users (no browser session), then re-discover against the host.
@@ -453,6 +454,11 @@ async function connect({ silent = false } = {}) {
   holdHostPersist(false);     // lift the localStorage suppression now that host is confirmed
   setState({ host });
   setStatus('connecting', 'Connecting…');
+  // Show a prominent connecting state on the main stage immediately — discovery below can take a
+  // few seconds, and until now the stage kept showing the "not connected" walkthrough (only the
+  // top-bar pill changed), which read as broken. Phase 0 = verifying the session.
+  setConnectPhase(0);
+  setOverlay('connecting');
   applyConfig();
 
   const org = await Discovery.discoverOrg(host);
@@ -483,6 +489,7 @@ async function connect({ silent = false } = {}) {
   currentUserName = org.userName || '';
 
   currentUserLogin = ''; // re-resolved (scoped to this session's identity) by refreshPersonalCopies()
+  setConnectPhase(1); // session verified — now loading the object catalog (the slow metadata searches)
   const objs = await Discovery.discoverObjects(host);
   if (objs.ok) discovered = { worksheets: objs.worksheets, liveboards: objs.liveboards };
   // Standalone saved Answers are cached in a flat session global (not keyed by host), so clear it
@@ -682,6 +689,27 @@ function applyLiveFilters() {
   try { pushRuntimeFilters(filters); } catch (_) {}
 }
 
+// ── Connect-phase feedback ────────────────────────────────────────────────────
+// connect() runs two sequential REST round-trips (verify session, then load worksheets/liveboards —
+// the second is a pair of record_size:10000 metadata searches, slow on a real instance). Without
+// this the main stage stays on the "not connected" walkthrough the whole time and looks frozen, so
+// paint a live checklist that hands off to the SDK loading checklist once render() takes over.
+const CONNECT_PHASES = ['Verifying your session', 'Loading worksheets & liveboards'];
+function setConnectPhase(active) {
+  const sub = $('#connecting-sub');
+  if (sub) sub.textContent = `${CONNECT_PHASES[active] || CONNECT_PHASES[0]}…`;
+  const root = document.getElementById('connecting-steps');
+  if (!root) return;
+  root.innerHTML = '';
+  CONNECT_PHASES.forEach((label, i) => {
+    const done = i < active, isActive = i === active;
+    const row = el('div', 'lp-step' + (done ? ' lp-done' : '') + (isActive ? ' lp-active' : ''));
+    row.appendChild(el('span', 'lp-mark', done ? '✓' : isActive ? '' : '○'));
+    row.appendChild(el('span', 'lp-label', isActive ? `${label}…` : label));
+    root.appendChild(row);
+  });
+}
+
 // ── State overlay ─────────────────────────────────────────────────────────────
 function setOverlay(state) {
   const wrap = $('#state-overlay');
@@ -728,6 +756,12 @@ function bindStateOverlay() {
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
+    // Close the raw-payload viewer first (it can sit on top of everything else)
+    const pm = document.getElementById('payload-modal');
+    if (pm && !pm.hidden) { pm.hidden = true; return; }
+    // Then the per-recipient email composer
+    const emc = document.getElementById('email-modal');
+    if (emc && !emc.hidden) { emc.hidden = true; return; }
     // Close auth modal
     const modal = document.getElementById('auth-modal');
     if (modal && !modal.hidden) { modal.hidden = true; return; }
@@ -787,6 +821,46 @@ function bindTopbar() {
   });
 }
 
+// ── Display menu ──────────────────────────────────────────────────────────────
+// The Webhooks tab is an experimental (beta) panel, hidden by default. This "Display ▾"
+// popover lets you reveal it; the choice is remembered per-browser (localStorage only —
+// it's a UI preference, not part of the shareable state).
+const WH_TAB_PREF_KEY = 'ts-playground.showWebhookTab';
+
+function webhookTabVisible() {
+  try { return localStorage.getItem(WH_TAB_PREF_KEY) === '1'; } catch (_) { return false; }
+}
+
+/** Show/hide the Webhooks tab. When hiding a tab that's currently active, fall back to Event Log. */
+function applyWebhookTabVisibility(show, { persist = false } = {}) {
+  const tab = $('#wh-tab');
+  if (!tab) return;
+  tab.hidden = !show;
+  const box = $('#toggle-wh-tab');
+  if (box) box.checked = show;
+  if (persist) { try { localStorage.setItem(WH_TAB_PREF_KEY, show ? '1' : '0'); } catch (_) {} }
+  if (!show && bottomTab === 'webhook') $('.bp-tab[data-tab="log"]').click();
+}
+
+function bindDisplayMenu() {
+  applyWebhookTabVisibility(webhookTabVisible());   // reflect the saved preference on boot
+
+  const btn = $('#display-btn');
+  const pop = $('#display-pop');
+  if (!btn || !pop) return;
+  const setOpen = (open) => {
+    pop.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+  };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(pop.hidden); });
+  // Click-outside / Escape close the popover.
+  document.addEventListener('click', (e) => { if (!pop.hidden && !e.target.closest('.tb-menu')) setOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) setOpen(false); });
+
+  const box = $('#toggle-wh-tab');
+  if (box) box.addEventListener('change', () => applyWebhookTabVisibility(box.checked, { persist: true }));
+}
+
 // ── Bottom panel ────────────────────────────────────────────────────────────
 function bindBottomPanel() {
   document.querySelectorAll('.bp-tab').forEach(t => t.addEventListener('click', () => {
@@ -796,17 +870,30 @@ function bindBottomPanel() {
     $('#pane-code').classList.toggle('active', bottomTab === 'code');
     $('#pane-flow').classList.toggle('active', bottomTab === 'flow');
     $('#pane-apis').classList.toggle('active', bottomTab === 'apis');
+    $('#pane-webhook').classList.toggle('active', bottomTab === 'webhook');
     $('#copy-code').hidden = bottomTab !== 'code';
     if ($('#bottom').dataset.open === 'false') toggleBottom(true);
     if (bottomTab === 'code') refreshCode();
     if (bottomTab === 'flow') renderFlow();
     if (bottomTab === 'apis') renderApis();
+    if (bottomTab === 'webhook') startWebhookPolling(); else stopWebhookPolling();
   }));
   $('#bp-toggle').addEventListener('click', () => toggleBottom());
   $('#clear-log').addEventListener('click', () => {
+    if (bottomTab === 'webhook') { clearWebhookInbox(); return; }
     $('#log-list').innerHTML = '<div class="log-empty">No events yet — interact with the embed.</div>';
     logCount = 0; $('#log-count').textContent = '0';
   });
+  const composeBtn = $('#wh-compose-toggle');
+  if (composeBtn) composeBtn.addEventListener('click', toggleComposer);
+  const apisBtn = $('#wh-apis-toggle');
+  if (apisBtn) apisBtn.addEventListener('click', toggleWebhookApis);
+  // Raw-payload modal: close on scrim click or the ✕ (Escape is handled globally above).
+  const pm = $('#payload-modal');
+  if (pm) pm.querySelectorAll('[data-close="payload"]').forEach(b => b.addEventListener('click', () => { pm.hidden = true; }));
+  // Per-recipient email composer: close on scrim click or the ✕ (Escape handled globally above).
+  const em = $('#email-modal');
+  if (em) em.querySelectorAll('[data-close="email"]').forEach(b => b.addEventListener('click', () => { em.hidden = true; }));
   $('#copy-code').addEventListener('click', () => {
     navigator.clipboard.writeText(generateCode()).then(() => toast('SDK code copied', 'success'));
   });
@@ -832,6 +919,818 @@ function logEvent(type, data) {
   const dataEl = el('span', 'lr-data'); dataEl.textContent = String(data);
   row.append(timeEl, typeEl, dataEl);
   list.insertBefore(row, list.firstChild);
+}
+
+// ═══ WEBHOOK INBOX — live view of ThoughtSpot deliveries hitting server.js /api/webhook ═══════════
+// The receiver is opt-in (TS_ALLOW_WEBHOOK_SINK) and localhost-only; this panel just polls it and
+// renders what lands. Every payload-derived string enters the DOM via textContent (untrusted → XSS).
+let webhookTimer = null;
+
+function startWebhookPolling() {
+  if (webhookTimer) return;
+  fetchWebhookEvents();                         // paint immediately
+  webhookTimer = setInterval(fetchWebhookEvents, 4000);
+}
+function stopWebhookPolling() {
+  if (webhookTimer) { clearInterval(webhookTimer); webhookTimer = null; }
+}
+
+async function fetchWebhookEvents() {
+  try {
+    const res = await fetch(`${API_BASE}/api/webhook/events`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    renderWebhookEvents(await res.json());
+  } catch (_) { /* server unreachable — keep the last render */ }
+}
+
+async function clearWebhookInbox() {
+  try { await fetch(`${API_BASE}/api/webhook/events`, { method: 'DELETE' }); } catch (_) {}
+  $('#wh-count').textContent = '0';
+  fetchWebhookEvents();                          // repaint from the (now empty) live state
+}
+
+function receiverOffHint() {
+  const hint = el('div', 'wh-hint');
+  const h = el('div', 'wh-hint-title'); h.textContent = 'Receiver is off';
+  const b = el('div', 'wh-hint-sub'); b.textContent = 'Arm it, register a webhook, then trigger a schedule:';
+  const ol = el('ol', 'wh-hint-steps');
+  [
+    'TS_ALLOW_WEBHOOK_SINK=true TS_WEBHOOK_SECRET=<secret> npm start',
+    'ngrok http 3000',
+    'npm run register-webhook -- --url=https://<ngrok>/api/webhook',
+    'npm run schedule-liveboard -- --liveboard="Webhooks Testing" --users=… --emails=…',
+    'In ThoughtSpot: open the schedule → Send now',
+  ].forEach((s) => { const li = el('li'); li.textContent = s; ol.appendChild(li); });
+  const foot = el('div', 'wh-hint-foot'); foot.textContent = 'Full walkthrough: docs/webhook-inbox-demo.md';
+  hint.append(h, b, ol, foot);
+  return hint;
+}
+
+function waitingHint(secretConfigured) {
+  const e = el('div', 'wh-empty');
+  const t = el('div', 'wh-empty-title'); t.textContent = 'Waiting for a delivery…';
+  const s = el('div', 'wh-empty-sub');
+  s.textContent = secretConfigured
+    ? 'Receiver armed, signatures verified. Trigger a schedule (Send now), or use ＋ Compose delivery.'
+    : 'Receiver armed (no shared secret — deliveries show unverified). Trigger a schedule, or use ＋ Compose delivery.';
+  e.append(t, s);
+  return e;
+}
+
+function renderWebhookEvents(data) {
+  const list = $('#wh-list');
+  const events = Array.isArray(data.events) ? data.events : [];
+  $('#wh-count').textContent = String(events.length);
+
+  if (!data.enabled) { list.replaceChildren(receiverOffHint()); return; }
+  if (!events.length) { list.replaceChildren(waitingHint(data.secretConfigured)); return; }
+
+  const frag = document.createDocumentFragment();
+  const summary = batchingSummary(events);
+  if (summary) frag.appendChild(summary);
+  events.forEach((ev) => frag.appendChild(webhookCard(ev)));
+  list.replaceChildren(frag);
+}
+
+function isLiveboardSchedule(ev) {
+  const p = ev?.payload || {};
+  return p.eventType === 'LIVEBOARD_SCHEDULE'
+      || p.data?.notificationType === 'LIVEBOARD_SCHEDULE'
+      || Array.isArray(p.data?.recipients);       // defensive — recipients array ⇒ a schedule delivery
+}
+
+// Serialize a delivery to the exact text the payload viewer shows (JSON + an attachments note).
+function payloadText(ev) {
+  let text;
+  try { text = JSON.stringify(ev.payload, null, 2); } catch (_) { text = String(ev.payload); }
+  if (ev.files?.length) text += `\n\n// attachments: ${ev.files.map((f) => `${f.filename} (${f.size} bytes)`).join(', ')}`;
+  return text;
+}
+
+// An ⓘ button that pops the raw payload into a modal — so the live 4s re-render of the inbox can't
+// collapse it out from under you (an inline toggle got wiped on every poll). Returns { btn }.
+function payloadViewer(ev) {
+  const btn = el('button', 'wh-ibtn'); btn.textContent = 'ⓘ';
+  btn.title = 'View raw payload'; btn.setAttribute('aria-label', 'View raw payload');
+  btn.addEventListener('click', () => openPayloadModal(ev));
+  return { btn };
+}
+
+// Show one delivery's raw payload in the centered modal. All payload-derived text goes in via
+// textContent (untrusted → never innerHTML).
+function openPayloadModal(ev) {
+  const modal = $('#payload-modal');
+  if (!modal) return;
+  const text = payloadText(ev);
+  const pre = $('#wh-payload-pre'); if (pre) pre.textContent = text;
+  const sub = $('#wh-payload-sub');
+  if (sub) {
+    const kind = ev.notificationType || ev.payload?.eventType || 'webhook event';
+    const bits = [kind, timeStr(ev.receivedAt), ev.verified ? '✓ verified' : '⚠ unverified'].filter(Boolean);
+    sub.textContent = bits.join('  ·  ');
+  }
+  const copy = $('#wh-payload-copy');
+  if (copy) copy.onclick = () => navigator.clipboard.writeText(text)
+    .then(() => toast('Payload copied', 'success'))
+    .catch(() => toast('Could not copy'));
+  modal.hidden = false;
+}
+
+function timeStr(iso) { try { return new Date(iso).toTimeString().slice(0, 8); } catch (_) { return ''; } }
+
+// ── Per-recipient email composer (PREVIEW ONLY) ──────────────────────────────────────────────────
+// Turns one scheduled-Liveboard delivery into a customized email per recipient — resolving {{tokens}}
+// against each recipient — with that delivery's rendered report shown as the attachment. It does NOT
+// send: no mail transport is wired (that would touch server.js). It renders exactly what WOULD go out.
+// Every payload-derived value enters the DOM via textContent (untrusted webhook data → never innerHTML).
+const EMAIL_TPL_DEFAULT = {
+  subject: 'Your {{liveboard}} report',
+  body: 'Hi {{recipient}},\n\n'
+      + 'Attached is your {{liveboard}} report ({{format}}), generated on {{date}}.\n'
+      + 'This copy was rendered with your own access.\n\n'
+      + 'Thanks,\nThe Analytics Team',
+};
+
+// Replace {{token}} with vars[token]; leave unknown tokens untouched so typos are visible in preview.
+function fillTemplate(tpl, vars) {
+  return String(tpl).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : m));
+}
+
+function emailComposerBtn(ev) {
+  const btn = el('button', 'wh-ibtn wh-ibtn--email');
+  btn.textContent = '✉';
+  btn.title = 'Compose a customized email per recipient (report attached)';
+  btn.setAttribute('aria-label', 'Compose per-recipient email');
+  btn.addEventListener('click', () => openEmailComposer(ev));
+  return btn;
+}
+
+function openEmailComposer(ev) {
+  const modal = $('#email-modal');
+  if (!modal) return;
+  const p = ev.payload || {};
+  const data = p.data || {};
+  const sched = data.scheduleDetails || {};
+  const recipients = Array.isArray(data.recipients) ? data.recipients : [];
+  const file = (Array.isArray(ev.files) ? ev.files : [])[0] || null;
+  const ctx = {
+    liveboard: p.metadataObject?.name || 'Scheduled Liveboard',
+    format: String(sched.fileFormat || '').toUpperCase() || 'PDF',
+    date: (() => { try { return new Date(ev.receivedAt).toISOString().slice(0, 10); } catch (_) { return ''; } })(),
+    file,
+    recipients,
+  };
+
+  const sub = $('#wh-email-sub');
+  if (sub) sub.textContent = `${ctx.liveboard} · ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}${file ? ` · ${file.filename}` : ' · no attachment'}`;
+
+  const subjEl = $('#wh-email-subject');
+  const bodyEl = $('#wh-email-body');
+  if (subjEl && !subjEl.value) subjEl.value = EMAIL_TPL_DEFAULT.subject;
+  if (bodyEl && !bodyEl.value) bodyEl.value = EMAIL_TPL_DEFAULT.body;
+
+  const rerender = () => renderEmailPreviews(ctx, subjEl ? subjEl.value : '', bodyEl ? bodyEl.value : '');
+  if (subjEl) subjEl.oninput = rerender;
+  if (bodyEl) bodyEl.oninput = rerender;
+  rerender();
+
+  modal.hidden = false;
+}
+
+function renderEmailPreviews(ctx, subjectTpl, bodyTpl) {
+  const wrap = $('#wh-email-previews');
+  const count = $('#wh-email-count');
+  if (!wrap) return;
+  const recips = ctx.recipients.length ? ctx.recipients : [{ name: '(no recipients on this delivery)', email: '' }];
+  if (count) count.textContent = `${recips.length} email${recips.length === 1 ? '' : 's'} — one customized per recipient`;
+  const frag = document.createDocumentFragment();
+  recips.forEach((r) => {
+    const vars = {
+      recipient: r?.name || r?.email || 'there',
+      email: r?.email || r?.name || '',
+      liveboard: ctx.liveboard,
+      format: ctx.format,
+      date: ctx.date,
+    };
+    frag.appendChild(emailPreviewCard(r, fillTemplate(subjectTpl, vars), fillTemplate(bodyTpl, vars), ctx.file));
+  });
+  wrap.replaceChildren(frag);
+}
+
+function emailPreviewCard(r, subject, body, file) {
+  const card = el('div', 'wh-email-card');
+  const ext = r?.type === 'EXTERNAL_EMAIL';
+
+  const to = el('div', 'wh-email-row');
+  const toK = el('span', 'wh-email-k'); toK.textContent = 'To';
+  const toV = el('span', 'wh-email-v'); toV.textContent = r?.email || r?.name || '—';
+  const tag = el('span', `wh-email-tag ${ext ? 'wh-email-tag--ext' : 'wh-email-tag--user'}`);
+  tag.textContent = ext ? 'EXT' : 'USER';
+  to.append(toK, toV, tag);
+
+  const subjRow = el('div', 'wh-email-row');
+  const sK = el('span', 'wh-email-k'); sK.textContent = 'Subject';
+  const sV = el('span', 'wh-email-v wh-email-subjline'); sV.textContent = subject;
+  subjRow.append(sK, sV);
+
+  const pre = el('pre', 'wh-email-preview-body');
+  pre.textContent = body;   // resolved template — textContent, never innerHTML
+
+  card.append(to, subjRow, pre);
+
+  if (file) {
+    const att = el('div', 'wh-email-attach');
+    const a = document.createElement('a');
+    a.className = 'wh-file'; a.href = `${API_BASE}${file.href}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = `📎 ${file.filename} · ${fmtBytes(file.size)}`;
+    att.appendChild(a);
+    card.appendChild(att);
+  }
+  return card;
+}
+
+// One delivery → a card. Scheduled-Liveboard deliveries get the batching card; KPI alerts and
+// anything else keep the classic head + body.
+function webhookCard(ev) {
+  const kpi = ev.payload?.data?.scheduledMetricUpdateWebhookNotification;
+  if (!kpi && isLiveboardSchedule(ev)) return liveboardScheduleCard(ev);
+
+  const card = el('div', 'wh-card');
+  const head = el('div', 'wh-card-head');
+  const badge = el('span', `wh-badge ${ev.verified ? 'wh-badge--ok' : 'wh-badge--warn'}`);
+  badge.textContent = ev.verified ? '✓ verified' : '⚠ unverified';
+  badge.title = ev.verifyReason || '';
+  const type = el('span', 'wh-type'); type.textContent = ev.notificationType || 'webhook event';
+  const time = el('span', 'wh-time'); time.textContent = timeStr(ev.receivedAt);
+  const pv = payloadViewer(ev);
+  head.append(badge, type, time, pv.btn);
+  card.appendChild(head);
+  card.appendChild(kpi ? kpiAlertBody(ev.payload.data, kpi) : genericBody(ev.payload));
+  return card;
+}
+
+function kpiAlertBody(data, kpi) {
+  const wrap = el('div', 'wh-kpi');
+  const rule = kpi.monitorRuleForWebhook || {};
+  const exec = kpi.ruleExecutionDetails || {};
+
+  const title = el('div', 'wh-kpi-title');
+  title.textContent = rule.ruleName || rule.metricName || 'KPI alert';
+  wrap.appendChild(title);
+
+  const grid = el('div', 'wh-kpi-grid');
+  const field = (label, value) => {
+    if (value == null || value === '') return;
+    const f = el('div', 'wh-kpi-field');
+    const l = el('span', 'wh-kpi-label'); l.textContent = label;
+    const v = el('span', 'wh-kpi-value'); v.textContent = String(value);
+    f.append(l, v); grid.appendChild(f);
+  };
+  field('Metric', rule.metricName);
+  field('Change', exec.percentageChange);
+  field('New value', exec.currentMetricValue);
+  field('When', exec.executionTimestamp);
+  field('Schedule', rule.scheduleString);
+  field('Recipient', data.currentUser?.displayName || data.currentUser?.email);
+  wrap.appendChild(grid);
+
+  // Only surface http(s) links from the payload — guards against a javascript: URL in the href.
+  const links = [
+    ['View metric', rule.metricUrl],
+    ['Modify alert', kpi.modifyUrl],
+    ['Unsubscribe', kpi.unsubscribeUrl],
+  ].filter(([, href]) => typeof href === 'string' && /^https?:\/\//i.test(href));
+  if (links.length) {
+    const bar = el('div', 'wh-kpi-actions');
+    links.forEach(([label, href]) => {
+      const a = document.createElement('a');
+      a.className = 'wh-link'; a.href = href; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = label;
+      bar.appendChild(a);
+    });
+    wrap.appendChild(bar);
+  }
+  return wrap;
+}
+
+function fmtBytes(n) {
+  if (n == null || Number.isNaN(n)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// A scheduled-Liveboard delivery → one clean card: type pill + who · a one-line "why" · recipient
+// chips · the downloadable report · an ⓘ to reveal the raw payload.
+function liveboardScheduleCard(ev) {
+  const p = ev.payload || {};
+  const data = p.data || {};
+  const sched = data.scheduleDetails || {};
+  const recipients = Array.isArray(data.recipients) ? data.recipients : [];
+  const files = Array.isArray(ev.files) ? ev.files : [];
+  const externals = recipients.filter((r) => r?.type === 'EXTERNAL_EMAIL');
+  const users = recipients.filter((r) => r?.type === 'USER');
+  const n = recipients.length;
+  const batched = n > 1;
+
+  const card = el('div', 'wh-card wh-lbc');
+
+  // Head — delivery-type pill + who + verified badge + ⓘ
+  const head = el('div', 'wh-lbc-head');
+  const pill = el('span', `wh-pill ${batched ? 'wh-pill--batched' : 'wh-pill--peruser'}`);
+  pill.textContent = batched ? 'BATCHED' : 'PER-USER';
+  const who = el('span', 'wh-lbc-who');
+  who.textContent = batched ? `${n} recipients` : (recipients[0]?.name || recipients[0]?.email || '1 recipient');
+  const badge = el('span', `wh-badge ${ev.verified ? 'wh-badge--ok' : 'wh-badge--warn'}`);
+  badge.textContent = ev.verified ? '✓ verified' : '⚠ unverified';
+  badge.title = ev.verifyReason || '';
+  const eb = emailComposerBtn(ev);
+  const pv = payloadViewer(ev);
+  head.append(pill, who, badge, eb, pv.btn);
+  card.appendChild(head);
+  // (raw payload opens in a modal via pv.btn — no inline pane to survive the 4s poll re-render)
+
+  // Subline — Liveboard · format · time (+ in-app tag)
+  const sub = el('div', 'wh-lbc-sub');
+  const lbName = p.metadataObject?.name || 'Scheduled Liveboard';
+  const url = p.metadataObject?.url;
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    const a = document.createElement('a'); a.className = 'wh-lbc-lb'; a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = lbName;
+    sub.appendChild(a);
+  } else { const s = el('span', 'wh-lbc-lb'); s.textContent = lbName; sub.appendChild(s); }
+  const bits = [String(sched.fileFormat || '').toUpperCase(), timeStr(ev.receivedAt)].filter(Boolean).join(' · ');
+  if (bits) { const m = el('span', 'wh-lbc-meta'); m.textContent = bits; sub.appendChild(m); }
+  const composed = !!data.__composed;
+  if (composed) { const t = el('span', 'wh-lbc-tag'); t.textContent = 'in-app'; t.title = 'Composed in-app — simulates the webhook shape only; no real render, no per-user RLS.'; sub.appendChild(t); }
+  card.appendChild(sub);
+
+  // Body — one-line "why", chips, download. Composed (in-app) deliveries never actually rendered, so
+  // they must NOT claim RLS was applied — they only illustrate the batching shape. Real deliveries
+  // DID render per-user server-side, so those keep the RLS explanation.
+  const body = el('div', 'wh-lbc-body');
+  const why = el('div', 'wh-lbc-why');
+  if (composed) {
+    why.textContent = users.length && !externals.length
+      ? 'Simulated per-user webhook — a real schedule would render this as each user (their RLS).'
+      : externals.length && !users.length
+        ? 'Simulated batched webhook — external recipients would share one owner-rendered copy.'
+        : 'Simulated delivery — shows the webhook fan-out shape, not a real per-user render.';
+  } else if (users.length && !externals.length) {
+    why.textContent = users.length === 1
+      ? `Rendered as ${users[0].name || users[0].email} — their own row-level-security view.`
+      : 'Rendered per user — each gets their own row-level-security view.';
+  } else if (externals.length && !users.length) {
+    why.textContent = "One shared copy, built with the schedule owner's access.";
+  } else if (externals.length && users.length) {
+    why.textContent = "Mixed — users get their own RLS copies; external recipients share the owner's copy.";
+  }
+  if (why.textContent) body.appendChild(why);
+
+  if (recipients.length) {
+    const chips = el('div', 'wh-chips');
+    const CAP = 200;
+    recipients.slice(0, CAP).forEach((r) => chips.appendChild(recipientChip(r)));
+    if (recipients.length > CAP) { const more = el('span', 'wh-chip-more'); more.textContent = `+${recipients.length - CAP} more`; chips.appendChild(more); }
+    body.appendChild(chips);
+  }
+
+  if (files.length) {
+    const dl = el('div', 'wh-lbc-dl');
+    files.forEach((f) => {
+      const a = document.createElement('a');
+      a.className = 'wh-file'; a.href = `${API_BASE}${f.href}`; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = `⬇  ${f.filename} · ${fmtBytes(f.size)}`;
+      dl.appendChild(a);
+    });
+    body.appendChild(dl);
+  }
+  card.appendChild(body);
+  return card;
+}
+
+function recipientChip(r) {
+  const ext = r?.type === 'EXTERNAL_EMAIL';
+  const chip = el('span', `wh-chip ${ext ? 'wh-chip--ext' : 'wh-chip--user'}`);
+  const tag = el('span', 'wh-chip-tag'); tag.textContent = ext ? 'EXT' : 'USER';
+  const name = el('span', 'wh-chip-name'); name.textContent = r?.name || r?.email || '—';
+  chip.append(tag, name);
+  if (r?.email && r.email !== name.textContent) { const em = el('span', 'wh-chip-email'); em.textContent = r.email; chip.appendChild(em); }
+  if (r?.id) chip.title = `id: ${r.id}`;   // id in a tooltip, not inline (declutter)
+  return chip;
+}
+
+// A summary strip aggregating every scheduled-Liveboard delivery in the inbox. Returns null when
+// there are no such deliveries (so the KPI/generic views are untouched).
+function batchingSummary(events) {
+  const lb = events.filter(isLiveboardSchedule);
+  if (!lb.length) return null;
+
+  let batched = 0, perUser = 0;
+  const deliveredUserIds = new Set(), scheduledUserIds = new Set();
+  lb.forEach((ev) => {
+    const data = ev.payload?.data || {};
+    const recips = Array.isArray(data.recipients) ? data.recipients : [];
+    if (recips.length > 1) batched++; else perUser++;
+    recips.forEach((r) => { if (r?.type !== 'EXTERNAL_EMAIL' && r?.id) deliveredUserIds.add(String(r.id)); });
+    (Array.isArray(data.scheduleDetails?.userIds) ? data.scheduleDetails.userIds : []).forEach((id) => scheduledUserIds.add(String(id)));
+  });
+  let missing = 0;
+  scheduledUserIds.forEach((id) => { if (!deliveredUserIds.has(id)) missing++; });
+
+  const wrap = el('div', 'wh-sum');
+  const stats = el('div', 'wh-sum-stats');
+  const tile = (num, label, cls) => {
+    const t = el('div', `wh-sum-tile${cls ? ' ' + cls : ''}`);
+    const nEl = el('span', 'wh-sum-num'); nEl.textContent = String(num);
+    const lEl = el('span', 'wh-sum-label'); lEl.textContent = label;
+    t.append(nEl, lEl); return t;
+  };
+  stats.append(
+    tile(lb.length, lb.length === 1 ? 'webhook' : 'webhooks'),
+    tile(batched, 'batched'),
+    tile(perUser, 'per-user'),
+  );
+  if (missing > 0) {
+    const t = tile(missing, 'no webhook', 'wh-sum-tile--warn');
+    t.title = 'Scheduled users who produced no delivery — row-level security left them no data. Group-expanded members aren’t counted here.';
+    stats.appendChild(t);
+  }
+  wrap.appendChild(stats);
+  const cap = el('div', 'wh-sum-caption');
+  cap.textContent = 'Each internal user gets their own RLS copy → one webhook each. External recipients share one copy → one webhook total.';
+  wrap.appendChild(cap);
+  return wrap;
+}
+
+// ── In-app recipient editor — compose a recipient mix and fire matching webhook deliveries ──────────
+// Pure webhook simulation: POSTs to the local receiver (/api/webhook) one delivery per the batching
+// rules (external batched, users per-webhook, groups expanded, blocked users skipped), each carrying a
+// synthetic placeholder attachment. It deliberately does NOT call the export API (report/liveboard) —
+// that renders as YOU, not per-recipient, so it can't represent RLS. Genuine per-user RLS renders come
+// only from a real ThoughtSpot schedule. Browser-sent deliveries are unsigned → shown ⚠ unverified.
+const composer = { emails: [], users: [], groups: [], blocked: [], message: '' };
+let composerBuilt = false;
+
+// A minimal valid single-page PDF as raw bytes (so the attachment opens in a browser).
+function tinyPdfBrowser(text) {
+  const esc = String(text).replace(/[()\\]/g, (c) => '\\' + c);
+  const stream = `BT /F1 14 Tf 24 60 Td (${esc}) Tj ET`;
+  const objs = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 420 120]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objs.forEach((o, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((off) => { pdf += `${String(off).padStart(10, '0')} 00000 n \n`; });
+  pdf += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF`;
+  const bytes = new Uint8Array(pdf.length);
+  for (let i = 0; i < pdf.length; i++) bytes[i] = pdf.charCodeAt(i) & 0xff;
+  return bytes;
+}
+
+function toggleComposer() {
+  const panel = $('#wh-composer');
+  if (!panel) return;
+  if (!composerBuilt) { buildComposer(panel); composerBuilt = true; }
+  panel.hidden = !panel.hidden;
+}
+
+function renderComposerChips(key, chips, onChange) {
+  chips.replaceChildren();
+  const items = composer[key];
+  if (!items.length) { const e = el('span', 'wh-comp-empty'); e.textContent = 'none yet'; chips.appendChild(e); return; }
+  items.forEach((it, i) => {
+    const chip = el('span', `wh-comp-chip wh-comp-chip--${key}`);
+    const t = el('span', 'wh-comp-chip-t'); t.textContent = key === 'groups' ? `${it.name} · ${it.n}` : it;
+    const x = el('button', 'wh-comp-x'); x.textContent = '×'; x.title = 'remove'; x.setAttribute('aria-label', 'remove');
+    x.addEventListener('click', () => { items.splice(i, 1); renderComposerChips(key, chips, onChange); onChange?.(); });
+    chip.append(t, x); chips.appendChild(chip);
+  });
+}
+
+// Derive how the current recipient mix maps to webhook deliveries (pure — no DOM, no side effects).
+// Mirrors composerSend's fan-out: external emails batch into ONE, each user/group-member is its own,
+// blocked users are named on the schedule but produce nothing.
+function composerPlan() {
+  const groupMembers = composer.groups.reduce((s, g) => s + Math.max(0, g.n || 0), 0);
+  const externalBatched = composer.emails.length ? 1 : 0;
+  const perUser = composer.users.length + groupMembers;
+  return { total: externalBatched + perUser, externalBatched, externalCount: composer.emails.length, perUser, blocked: composer.blocked.length };
+}
+
+// Live preview strip + Send-button label/enablement — recomputed on every recipient edit so the
+// batching outcome is visible before you fire anything.
+function updateComposerPreview(preview, send, real) {
+  const p = composerPlan();
+  send.textContent = p.total ? `Simulate ${p.total}` : 'Simulate';
+  send.disabled = p.total === 0;
+  if (real) real.disabled = p.total === 0;
+
+  preview.replaceChildren();
+  const arrow = el('span', 'wh-comp-preview-arrow'); arrow.textContent = '→';
+  preview.appendChild(arrow);
+  if (!p.total && !p.blocked) {
+    const e = el('span', 'wh-comp-preview-empty'); e.textContent = 'Add a recipient to preview which webhooks fire.';
+    preview.appendChild(e); return;
+  }
+  const lead = el('span', 'wh-comp-preview-lead');
+  lead.textContent = p.total === 1 ? '1 webhook fires' : `${p.total} webhooks fire`;
+  preview.appendChild(lead);
+  const pill = (label, cls) => { const s = el('span', `wh-comp-pill ${cls}`); s.textContent = label; preview.appendChild(s); };
+  if (p.externalBatched) pill(`1 batched · ${p.externalCount} external`, 'wh-comp-pill--ext');
+  if (p.perUser) pill(`${p.perUser} per-user`, 'wh-comp-pill--user');
+  if (p.blocked) pill(`${p.blocked} blocked → none`, 'wh-comp-pill--blocked');
+}
+
+function buildComposer(panel) {
+  // Seed with the customer's setup so it's demo-ready — every field is editable.
+  composer.emails = ['partner-a@example.com', 'partner-b@example.com'];
+  composer.users = ['wmoy_test_2'];
+  composer.groups = [{ name: 'wmoy_test_2_group', n: 2 }];
+  composer.blocked = ['wmoy_test_3'];
+  composer.message = 'Your scheduled Liveboard update from the Embed Playground demo.';
+
+  panel.replaceChildren();
+
+  // Header — title + a close affordance (matches the modal ✕ convention).
+  const header = el('div', 'wh-comp-header');
+  const htWrap = el('div', 'wh-comp-htext');
+  const ht = el('div', 'wh-comp-title'); ht.textContent = 'Compose a delivery';
+  const hs = el('div', 'wh-comp-hint'); hs.textContent = 'Fire a webhook per the batching rules, carrying a live export of the selected Liveboard.';
+  htWrap.append(ht, hs);
+  const close = el('button', 'wh-comp-close'); close.textContent = '✕'; close.title = 'Close'; close.setAttribute('aria-label', 'Close composer');
+  close.addEventListener('click', () => { panel.hidden = true; });
+  header.append(htWrap, close);
+  panel.appendChild(header);
+
+  const grid = el('div', 'wh-comp-grid');
+  panel.appendChild(grid);
+
+  // `refresh` is wired only after preview/send exist, but the fields (and their seed chips) are built
+  // first — so hand them a stable indirection that always calls the CURRENT refresh, not the stub.
+  let refresh = () => {};
+  const onEdit = () => refresh();
+
+  const field = (labelText, key, opts = {}) => {
+    const wrap = el('div', `wh-comp-field wh-comp-field--${key}`);
+    const lab = el('label', 'wh-comp-label');
+    const strong = el('span', 'wh-comp-label-t'); strong.textContent = labelText; lab.appendChild(strong);
+    if (opts.hint) { const h = el('span', 'wh-comp-label-h'); h.textContent = opts.hint; lab.appendChild(h); }
+    wrap.appendChild(lab);
+    const row = el('div', 'wh-comp-row');
+    const inp = document.createElement('input'); inp.className = 'wh-comp-input'; inp.placeholder = opts.ph || '';
+    row.appendChild(inp);
+    let numInp = null;
+    if (opts.num) {
+      numInp = document.createElement('input');
+      numInp.type = 'number'; numInp.min = '1'; numInp.value = '2'; numInp.className = 'wh-comp-num'; numInp.title = 'members';
+      row.appendChild(numInp);
+    }
+    const add = el('button', 'wh-comp-add'); add.textContent = 'Add';
+    const chips = el('div', 'wh-comp-chips');
+    const addItem = () => {
+      const v = inp.value.trim(); if (!v) return;
+      if (key === 'groups') composer.groups.push({ name: v, n: Math.max(1, parseInt(numInp.value, 10) || 1) });
+      else composer[key].push(v);
+      inp.value = ''; renderComposerChips(key, chips, onEdit); onEdit(); inp.focus();
+    };
+    add.addEventListener('click', addItem);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } });
+    row.appendChild(add);
+    wrap.append(row, chips);
+    grid.appendChild(wrap);
+    renderComposerChips(key, chips, onEdit);
+  };
+  field('External emails', 'emails', { ph: 'partner@example.com', hint: 'batched into one webhook' });
+  field('Internal users', 'users', { ph: 'wmoy_test_2', hint: 'one webhook each' });
+  field('Groups', 'groups', { ph: 'group name', num: true, hint: 'expanded per member' });
+  field('RLS-blocked', 'blocked', { ph: 'wmoy_test_3', hint: 'named, but get no webhook' });
+
+  // Email message → the schedule's `description`, which ThoughtSpot renders as "Description: <text>"
+  // in the notification email (real deliveries only). The rest of the email is ThoughtSpot's template.
+  const msg = el('div', 'wh-comp-msg');
+  const msgLab = el('label', 'wh-comp-label');
+  const msgT = el('span', 'wh-comp-label-t'); msgT.textContent = 'Email message';
+  const msgH = el('span', 'wh-comp-label-h'); msgH.textContent = 'shown as “Description:” in the email (real deliveries)';
+  msgLab.append(msgT, msgH);
+  const msgInput = document.createElement('textarea');
+  msgInput.className = 'wh-comp-msg-input';
+  msgInput.rows = 2;
+  msgInput.placeholder = 'e.g. Your weekly Capstone sales summary — reply with any questions.';
+  msgInput.value = composer.message || '';
+  msgInput.addEventListener('input', () => { composer.message = msgInput.value; });
+  msg.append(msgLab, msgInput);
+  panel.appendChild(msg);
+
+  const preview = el('div', 'wh-comp-preview');
+  panel.appendChild(preview);
+
+  const actions = el('div', 'wh-comp-actions');
+  const send = el('button', 'wh-comp-send');
+  send.title = 'Post synthetic deliveries to the local receiver — shows the fan-out shape only (⚠ unverified)';
+  send.addEventListener('click', composerSend);
+  const real = el('button', 'wh-comp-real');
+  real.textContent = '⚡ Fire real delivery';
+  real.title = 'Create a REAL ThoughtSpot schedule for the selected Liveboard + these recipients, then Send now';
+  real.addEventListener('click', composerSendReal);
+  const note = el('span', 'wh-comp-note');
+  note.textContent = '“Simulate” posts synthetic deliveries to the local receiver (fan-out shape only, ⚠ unverified). “⚡ Fire real delivery” creates a REAL ThoughtSpot schedule for the selected Liveboard + these recipients (needs a Trusted-token connection; the users/groups/emails must exist on the instance) that AUTO-FIRES at the next 5-minute mark — no Send-now click; the email(s) and webhook arrive together, ✓ verified.';
+  actions.append(send, real, note);
+  panel.appendChild(actions);
+
+  refresh = () => updateComposerPreview(preview, send, real);
+  refresh();
+}
+
+async function composerPost(recipients, userIds, groupIds, ctx) {
+  const host = (ctx.host || '').replace(/\/+$/, '');
+  // Shape matches the official LIVEBOARD_SCHEDULE payload (developers.thoughtspot.com/docs/webhooks-lb-payload).
+  const meta = {
+    eventType: 'LIVEBOARD_SCHEDULE',
+    schemaVersion: '1.0',
+    source: { applicationName: 'ThoughtSpot', applicationUrl: host || undefined, orgId: '0' },
+    actor: { actorType: 'SYSTEM' },
+    metadataObject: {
+      objectType: 'LIVEBOARD', id: ctx.lbId || undefined, name: ctx.lbName,
+      ...(host && ctx.lbId ? { url: `${host}/#/pinboard/${ctx.lbId}` } : {}),
+    },
+    data: {
+      scheduleDetails: {
+        name: `${ctx.lbName} — webhook demo`, fileFormat: 'pdf', status: 'SUCCESS',
+        userIds, groupIds, emailIds: [],
+      },
+      recipients,
+      channelType: 'webhook', communicationType: 'LiveboardSchedules',
+      __composed: true,   // private marker so the UI can tag in-app-composed deliveries (not in the real schema)
+    },
+  };
+  const who = recipients.map((r) => r.name || r.email).join(', ');
+  const fd = new FormData();
+  fd.append('payload', JSON.stringify(meta));
+  // Synthetic attachment labelled with its recipient(s). The composer never calls the export API
+  // (report/liveboard) — that renders as YOU, not per-recipient. Real per-user RLS renders come from
+  // an actual ThoughtSpot schedule.
+  fd.append('file', new Blob([tinyPdfBrowser(`${ctx.lbName} — copy for: ${who}`)], { type: 'application/pdf' }), `${ctx.lbName}.pdf`);
+  try {
+    const res = await fetch(`${API_BASE}/api/webhook`, { method: 'POST', body: fd });
+    if (res.status === 403) return 403;
+    return res.ok;
+  } catch (_) { return false; }
+}
+
+async function composerSend() {
+  const deliveries = [];
+  if (composer.emails.length) deliveries.push(composer.emails.map((e) => ({ type: 'EXTERNAL_EMAIL', email: e, name: e })));
+  composer.users.forEach((u) => deliveries.push([{ type: 'USER', id: `u-${u}`, name: u, email: `${u}@example.com` }]));
+  composer.groups.forEach((g) => {
+    for (let i = 1; i <= g.n; i++) deliveries.push([{ type: 'USER', id: `u-${g.name}-${i}`, name: `${g.name}_member_${i}`, email: `member${i}@example.com` }]);
+  });
+  if (!deliveries.length) { toast('Add at least one recipient first', 'warn'); return; }
+
+  const s = getState();
+  const lbId = s.liveboardId;
+  const lbName = (discovered.liveboards || []).find((l) => l.id === lbId)?.name || 'Liveboard';
+
+  // Webhook-only: fire the deliveries at the local receiver. We intentionally do NOT call the export
+  // API (report/liveboard) — it renders as the connected user, not per-recipient, so it can't show
+  // RLS. The lbId/lbName below only populate the payload's metadataObject (which Liveboard fired it);
+  // the attachment is a labelled placeholder. Real per-user RLS comes from a live ThoughtSpot schedule.
+  const userIds = [...composer.users.map((u) => `u-${u}`), ...composer.blocked.map((b) => `u-${b}`)];
+  const groupIds = composer.groups.map((g) => `g-${g.name}`);
+  const ctx = { lbName, lbId, host: s.host };
+
+  let sent = 0;
+  for (const recips of deliveries) {
+    const r = await composerPost(recips, userIds, groupIds, ctx);   // eslint-disable-line no-await-in-loop
+    if (r === 403) { toast('Receiver is off — start with TS_ALLOW_WEBHOOK_SINK=true', 'warn'); return; }
+    if (r) sent++;
+  }
+  toast(`Fired ${sent} simulated deliver${sent === 1 ? 'y' : 'ies'}${composer.blocked.length ? ` · ${composer.blocked.length} blocked → none` : ''}`, 'success');
+  startWebhookPolling();
+  fetchWebhookEvents();
+}
+
+// Create a REAL ThoughtSpot schedule for the app-selected Liveboard + composed recipients, set to
+// AUTO-FIRE at the next 5-minute mark — so no Send-now click is needed; it runs on its own within a
+// few minutes and sends the email(s) AND the webhook together. ThoughtSpot's cadence minute must be a
+// multiple of 5 (there's no REST "run now" and no sub-5-min granularity), so that's the fastest
+// hands-off option. Needs a trusted-auth session (the relay forwards the caller's own token).
+async function composerSendReal() {
+  const s = getState();
+  const lbId = s.liveboardId;
+  if (!lbId) { toast('Select a Liveboard in the app first (Object section).', 'warn'); return; }
+  if (!Discovery.hasBearerToken()) {
+    toast('Real deliveries need a REST session — connect with “Auth: Trusted token”.', 'warn'); return;
+  }
+  const emails = [...composer.emails];
+  const principals = [
+    ...composer.users.map((u) => ({ identifier: u, type: 'USER' })),
+    ...composer.blocked.map((b) => ({ identifier: b, type: 'USER' })), // named on the schedule; RLS yields no webhook
+    ...composer.groups.map((g) => ({ identifier: g.name, type: 'USER_GROUP' })),
+  ];
+  if (!emails.length && !principals.length) { toast('Add at least one recipient first', 'warn'); return; }
+
+  // Next 5-minute boundary in UTC with ≥60s lead so the scheduler reliably catches it. Pin the
+  // day-of-month to that date so it fires once soon (then only monthly), not every single day.
+  let t = new Date(Date.now() + 60 * 1000);
+  t.setUTCSeconds(0, 0);
+  t.setUTCMinutes(Math.ceil(t.getUTCMinutes() / 5) * 5);
+  if (t.getTime() - Date.now() < 60 * 1000) t = new Date(t.getTime() + 5 * 60 * 1000);
+  const hour = t.getUTCHours(), minute = t.getUTCMinutes();
+  const fireHM = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} UTC`;
+  const mins = Math.max(1, Math.round((t.getTime() - Date.now()) / 60000));
+
+  const lbName = (discovered.liveboards || []).find((l) => l.id === lbId)?.name || 'Liveboard';
+  const schedName = `Webhook demo — ${lbName} — ${Date.now()}`;
+  const body = {
+    name: schedName,
+    // description is REQUIRED and is the ONLY custom text ThoughtSpot puts in the email ("Description: …").
+    description: (composer.message || '').trim() || 'Scheduled Liveboard update from the Embed Playground.',
+    metadata_type: 'LIVEBOARD',
+    metadata_identifier: lbId,
+    file_format: 'PDF',
+    time_zone: 'Etc/UTC',
+    frequency: { cron_expression: { second: '0', minute: String(minute), hour: String(hour), day_of_month: String(t.getUTCDate()), month: '*', day_of_week: '?' } },
+    // pdf_options.page_footer_text also accepts custom text (in the attached PDF's footer).
+    recipient_details: { ...(emails.length ? { emails } : {}), ...(principals.length ? { principals } : {}) },
+    pdf_options: { complete_liveboard: true, include_cover_page: true, include_page_number: true },
+  };
+
+  const done = showBusy('Creating a real auto-firing schedule…');
+  let res;
+  try {
+    res = await Discovery.createSchedule(s.host, body);
+  } catch (err) {
+    // createSchedule can throw (relay unreachable, network) — otherwise the busy toast hangs forever.
+    res = { ok: false, error: err?.message || String(err) };
+  }
+  if (!res.ok) {
+    const reason = String(res.error || 'unknown error');
+    done('Schedule failed — details below', 'error');
+    logEvent('Webhook', `✗ schedules/create: ${reason}`);
+    showRealScheduleError(reason);   // persistent, so a long/important message doesn't vanish with the toast
+    return;
+  }
+  done(`Scheduled — auto-fires ~${fireHM} (~${mins} min), no click needed`, 'success');
+  logEvent('Webhook', `✓ schedule "${schedName}" auto-fires ${fireHM} (${res.id || 'id n/a'})`);
+  showRealScheduleHint(schedName, fireHM, mins, s.host, lbId);
+  startWebhookPolling();
+}
+
+// Inline confirmation shown in the composer after a real auto-firing schedule is created.
+function showRealScheduleHint(schedName, fireHM, mins, host, lbId) {
+  const panel = $('#wh-composer');
+  if (!panel) return;
+  let hint = panel.querySelector('.wh-comp-realhint');
+  if (!hint) { hint = el('div', 'wh-comp-realhint'); panel.appendChild(hint); }
+  hint.className = 'wh-comp-realhint';   // reset in case a prior attempt left the --error styling
+  hint.replaceChildren();
+  const t = el('div', 'wh-comp-realhint-t');
+  t.textContent = `✓ Real schedule created — auto-fires at ~${fireHM} (~${mins} min). No Send-now needed.`;
+  const b = el('div', 'wh-comp-realhint-b');
+  b.textContent = 'Keep this tab open and watch the inbox — the email(s) and the webhook (✓ verified) fire together when it runs. Don’t want to wait? Open the Liveboard’s Schedules and click Send now for an instant fire.';
+  hint.append(t, b);
+  const h = (host || '').replace(/\/+$/, '');
+  if (h && lbId) {
+    const a = document.createElement('a');
+    a.className = 'wh-link'; a.href = `${h}/#/pinboard/${lbId}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'Open Liveboard → Send now (instant)';
+    hint.appendChild(a);
+  }
+}
+
+// Persistent error surfaced in the composer when a real schedule create fails — the toast is too brief
+// for a real TS error. reason is upstream text → textContent (never innerHTML). Reuses the hint slot so
+// a prior success/error box doesn't linger.
+function showRealScheduleError(reason) {
+  const panel = $('#wh-composer');
+  if (!panel) return;
+  let box = panel.querySelector('.wh-comp-realhint');
+  if (!box) { box = el('div', 'wh-comp-realhint'); panel.appendChild(box); }
+  box.className = 'wh-comp-realhint wh-comp-realhint--error';
+  box.replaceChildren();
+  const t = el('div', 'wh-comp-realhint-t');
+  t.textContent = '✗ Schedule create failed';
+  const b = el('div', 'wh-comp-realhint-b');
+  b.textContent = reason;   // the exact upstream reason (now legible, no more "[object Object]")
+  const tip = el('div', 'wh-comp-realhint-b');
+  tip.textContent = 'Common causes: a recipient user/group that doesn’t exist on this instance, the connected user lacking schedule/admin privileges, or the Liveboard not being schedulable. The full reason is also in the Event Log.';
+  box.append(t, b, tip);
+}
+
+function genericBody(payload) {
+  const pre = el('pre', 'wh-json');
+  let text;
+  try { text = JSON.stringify(payload, null, 2); } catch (_) { text = String(payload); }
+  if (text && text.length > 4000) text = text.slice(0, 4000) + '\n… (truncated)';
+  pre.textContent = text;   // textContent — never innerHTML for payload data
+  return pre;
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -4846,7 +5745,42 @@ function apiCatalog(s) {
     ex.push({ method: 'POST', path: '/api/writeback', scope: 'playground', desc: 'Write-back custom-action sink (stub; requires TS_ALLOW_DEV_PROXY on the server).' });
   if (ex.length) groups.push({ group: 'Export & write-back', items: ex });
 
+  // Webhook demo surface — the 🔔 Webhooks tab is always available, so always list its APIs.
+  groups.push(WEBHOOK_API_GROUP);
+
   return groups;
+}
+
+// The webhook demo's REST + playground surface. Single source of truth: the APIs Used tab folds it
+// into its catalog, and the 🔔 Webhooks tab renders it inline via renderWebhookApis().
+const WEBHOOK_API_GROUP = { group: 'Webhooks (scheduled Liveboard)', items: [
+  { method: 'POST', path: '/api/rest/2.0/webhooks/create', scope: 'TS REST', desc: 'Register the webhook endpoint for the LIVEBOARD_SCHEDULE event (npm run register-webhook).' },
+  { method: 'POST', path: '/api/rest/2.0/schedules/create', scope: 'TS REST', desc: 'Create a Liveboard schedule with recipients (npm run schedule-liveboard) — then Send now to fire it.' },
+  { method: 'POST', path: '/api/rest/2.0/report/liveboard', scope: 'TS REST', desc: 'Render the Liveboard export ThoughtSpot delivers as the webhook attachment (per recipient, with RLS).' },
+  { method: 'POST', path: '/api/webhook', scope: 'playground', desc: 'Local receiver — parses the multipart delivery (JSON metadata + report file). Fail-closed (TS_ALLOW_WEBHOOK_SINK).' },
+  { method: 'GET', path: '/api/webhook/events', scope: 'playground', desc: 'The 🔔 Webhooks tab polls this every 4s for received deliveries.' },
+  { method: 'GET', path: '/api/webhook/file/:id/:fileId', scope: 'playground', desc: 'Download a delivered report attachment (what a recipient actually got).' },
+] };
+
+// One catalog entry → a row (method pill · path + desc · scope · live-count badge). Shared by the
+// APIs Used tab and the inline webhook APIs panel so both stay pixel-identical.
+function apiRow(it) {
+  const row = el('div', 'api-row');
+  const m = el('span', `api-method api-method--${it.method.toLowerCase()}`); m.textContent = it.method;
+  const main = el('div', 'api-main');
+  const path = el('div', 'api-path'); path.textContent = it.path;       // textContent: never parse as HTML
+  const desc = el('div', 'api-desc'); desc.textContent = it.desc;
+  main.append(path, desc);
+  const scope = el('span', 'api-scope'); scope.textContent = it.scope;
+  row.append(m, main, scope);
+  const rec = apiUsage.get(`${it.method} ${it.path}`);
+  if (rec && rec.count) {
+    const ok = !(rec.lastStatus >= 400);
+    const badge = el('span', 'api-badge' + (ok ? '' : ' api-badge--err'));
+    badge.textContent = `✓ ${rec.count}${rec.lastStatus ? ' · ' + rec.lastStatus : ''}`;
+    row.appendChild(badge);
+  }
+  return row;
 }
 
 function renderApis() {
@@ -4859,26 +5793,35 @@ function renderApis() {
   apiCatalog(getState()).forEach(g => {
     const sec = el('div', 'api-group');
     sec.appendChild(el('div', 'api-group-t', g.group));
-    g.items.forEach(it => {
-      const row = el('div', 'api-row');
-      const m = el('span', `api-method api-method--${it.method.toLowerCase()}`); m.textContent = it.method;
-      const main = el('div', 'api-main');
-      const path = el('div', 'api-path'); path.textContent = it.path;       // textContent: never parse as HTML
-      const desc = el('div', 'api-desc'); desc.textContent = it.desc;
-      main.append(path, desc);
-      const scope = el('span', 'api-scope'); scope.textContent = it.scope;
-      row.append(m, main, scope);
-      const rec = apiUsage.get(`${it.method} ${it.path}`);
-      if (rec && rec.count) {
-        const ok = !(rec.lastStatus >= 400);
-        const badge = el('span', 'api-badge' + (ok ? '' : ' api-badge--err'));
-        badge.textContent = `✓ ${rec.count}${rec.lastStatus ? ' · ' + rec.lastStatus : ''}`;
-        row.appendChild(badge);
-      }
-      sec.appendChild(row);
-    });
+    g.items.forEach(it => sec.appendChild(apiRow(it)));
     root.appendChild(sec);
   });
+}
+
+// ── 🔔 Webhooks tab: inline "APIs used" panel ───────────────────────────────
+// The webhook demo's own endpoints, right where the deliveries land — the APIs Used tab lists them
+// too, but you shouldn't have to leave the inbox to see what wire calls make it work. Lives outside
+// #wh-list so the 4s poll never rebuilds it; rebuilt on each open so live-count badges stay current.
+function toggleWebhookApis() {
+  const panel = $('#wh-apis');
+  const btn = $('#wh-apis-toggle');
+  if (!panel) return;
+  const show = panel.hidden;
+  if (show) renderWebhookApis(panel);
+  panel.hidden = !show;
+  if (btn) btn.setAttribute('aria-expanded', String(show));
+}
+
+function renderWebhookApis(panel) {
+  panel.replaceChildren();
+  const intro = el('div', 'wh-apis-intro',
+    'The wire calls behind this tab. <strong>TS REST</strong> = direct to ThoughtSpot · <strong>playground</strong> = this tool’s Node server. A green badge marks calls that fired this session.');
+  panel.appendChild(intro);
+  const sec = el('div', 'api-group');
+  WEBHOOK_API_GROUP.items.forEach(it => sec.appendChild(apiRow(it)));
+  panel.appendChild(sec);
+  const foot = el('div', 'wh-apis-foot'); foot.textContent = 'See the ⚯ APIs Used tab for the full contextual catalog. Full walkthrough: docs/webhook-inbox-demo.md';
+  panel.appendChild(foot);
 }
 
 // Re-render the live views whenever shared state changes.
