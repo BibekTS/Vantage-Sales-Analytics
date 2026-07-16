@@ -283,6 +283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderEmbedList();
   bindTopbar();
   bindBottomPanel();
+  bindDisplayMenu();
   bindStateOverlay();
   // When a trusted-auth token is minted & applied, feed it to REST discovery so object lists
   // populate for token-only users (no browser session), then re-discover against the host.
@@ -758,6 +759,9 @@ function bindStateOverlay() {
     // Close the raw-payload viewer first (it can sit on top of everything else)
     const pm = document.getElementById('payload-modal');
     if (pm && !pm.hidden) { pm.hidden = true; return; }
+    // Then the per-recipient email composer
+    const emc = document.getElementById('email-modal');
+    if (emc && !emc.hidden) { emc.hidden = true; return; }
     // Close auth modal
     const modal = document.getElementById('auth-modal');
     if (modal && !modal.hidden) { modal.hidden = true; return; }
@@ -817,6 +821,46 @@ function bindTopbar() {
   });
 }
 
+// ── Display menu ──────────────────────────────────────────────────────────────
+// The Webhooks tab is an experimental (beta) panel, hidden by default. This "Display ▾"
+// popover lets you reveal it; the choice is remembered per-browser (localStorage only —
+// it's a UI preference, not part of the shareable state).
+const WH_TAB_PREF_KEY = 'ts-playground.showWebhookTab';
+
+function webhookTabVisible() {
+  try { return localStorage.getItem(WH_TAB_PREF_KEY) === '1'; } catch (_) { return false; }
+}
+
+/** Show/hide the Webhooks tab. When hiding a tab that's currently active, fall back to Event Log. */
+function applyWebhookTabVisibility(show, { persist = false } = {}) {
+  const tab = $('#wh-tab');
+  if (!tab) return;
+  tab.hidden = !show;
+  const box = $('#toggle-wh-tab');
+  if (box) box.checked = show;
+  if (persist) { try { localStorage.setItem(WH_TAB_PREF_KEY, show ? '1' : '0'); } catch (_) {} }
+  if (!show && bottomTab === 'webhook') $('.bp-tab[data-tab="log"]').click();
+}
+
+function bindDisplayMenu() {
+  applyWebhookTabVisibility(webhookTabVisible());   // reflect the saved preference on boot
+
+  const btn = $('#display-btn');
+  const pop = $('#display-pop');
+  if (!btn || !pop) return;
+  const setOpen = (open) => {
+    pop.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+  };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(pop.hidden); });
+  // Click-outside / Escape close the popover.
+  document.addEventListener('click', (e) => { if (!pop.hidden && !e.target.closest('.tb-menu')) setOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) setOpen(false); });
+
+  const box = $('#toggle-wh-tab');
+  if (box) box.addEventListener('change', () => applyWebhookTabVisibility(box.checked, { persist: true }));
+}
+
 // ── Bottom panel ────────────────────────────────────────────────────────────
 function bindBottomPanel() {
   document.querySelectorAll('.bp-tab').forEach(t => t.addEventListener('click', () => {
@@ -847,6 +891,9 @@ function bindBottomPanel() {
   // Raw-payload modal: close on scrim click or the ✕ (Escape is handled globally above).
   const pm = $('#payload-modal');
   if (pm) pm.querySelectorAll('[data-close="payload"]').forEach(b => b.addEventListener('click', () => { pm.hidden = true; }));
+  // Per-recipient email composer: close on scrim click or the ✕ (Escape handled globally above).
+  const em = $('#email-modal');
+  if (em) em.querySelectorAll('[data-close="email"]').forEach(b => b.addEventListener('click', () => { em.hidden = true; }));
   $('#copy-code').addEventListener('click', () => {
     navigator.clipboard.writeText(generateCode()).then(() => toast('SDK code copied', 'success'));
   });
@@ -991,6 +1038,117 @@ function openPayloadModal(ev) {
 
 function timeStr(iso) { try { return new Date(iso).toTimeString().slice(0, 8); } catch (_) { return ''; } }
 
+// ── Per-recipient email composer (PREVIEW ONLY) ──────────────────────────────────────────────────
+// Turns one scheduled-Liveboard delivery into a customized email per recipient — resolving {{tokens}}
+// against each recipient — with that delivery's rendered report shown as the attachment. It does NOT
+// send: no mail transport is wired (that would touch server.js). It renders exactly what WOULD go out.
+// Every payload-derived value enters the DOM via textContent (untrusted webhook data → never innerHTML).
+const EMAIL_TPL_DEFAULT = {
+  subject: 'Your {{liveboard}} report',
+  body: 'Hi {{recipient}},\n\n'
+      + 'Attached is your {{liveboard}} report ({{format}}), generated on {{date}}.\n'
+      + 'This copy was rendered with your own access.\n\n'
+      + 'Thanks,\nThe Analytics Team',
+};
+
+// Replace {{token}} with vars[token]; leave unknown tokens untouched so typos are visible in preview.
+function fillTemplate(tpl, vars) {
+  return String(tpl).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : m));
+}
+
+function emailComposerBtn(ev) {
+  const btn = el('button', 'wh-ibtn wh-ibtn--email');
+  btn.textContent = '✉';
+  btn.title = 'Compose a customized email per recipient (report attached)';
+  btn.setAttribute('aria-label', 'Compose per-recipient email');
+  btn.addEventListener('click', () => openEmailComposer(ev));
+  return btn;
+}
+
+function openEmailComposer(ev) {
+  const modal = $('#email-modal');
+  if (!modal) return;
+  const p = ev.payload || {};
+  const data = p.data || {};
+  const sched = data.scheduleDetails || {};
+  const recipients = Array.isArray(data.recipients) ? data.recipients : [];
+  const file = (Array.isArray(ev.files) ? ev.files : [])[0] || null;
+  const ctx = {
+    liveboard: p.metadataObject?.name || 'Scheduled Liveboard',
+    format: String(sched.fileFormat || '').toUpperCase() || 'PDF',
+    date: (() => { try { return new Date(ev.receivedAt).toISOString().slice(0, 10); } catch (_) { return ''; } })(),
+    file,
+    recipients,
+  };
+
+  const sub = $('#wh-email-sub');
+  if (sub) sub.textContent = `${ctx.liveboard} · ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}${file ? ` · ${file.filename}` : ' · no attachment'}`;
+
+  const subjEl = $('#wh-email-subject');
+  const bodyEl = $('#wh-email-body');
+  if (subjEl && !subjEl.value) subjEl.value = EMAIL_TPL_DEFAULT.subject;
+  if (bodyEl && !bodyEl.value) bodyEl.value = EMAIL_TPL_DEFAULT.body;
+
+  const rerender = () => renderEmailPreviews(ctx, subjEl ? subjEl.value : '', bodyEl ? bodyEl.value : '');
+  if (subjEl) subjEl.oninput = rerender;
+  if (bodyEl) bodyEl.oninput = rerender;
+  rerender();
+
+  modal.hidden = false;
+}
+
+function renderEmailPreviews(ctx, subjectTpl, bodyTpl) {
+  const wrap = $('#wh-email-previews');
+  const count = $('#wh-email-count');
+  if (!wrap) return;
+  const recips = ctx.recipients.length ? ctx.recipients : [{ name: '(no recipients on this delivery)', email: '' }];
+  if (count) count.textContent = `${recips.length} email${recips.length === 1 ? '' : 's'} — one customized per recipient`;
+  const frag = document.createDocumentFragment();
+  recips.forEach((r) => {
+    const vars = {
+      recipient: r?.name || r?.email || 'there',
+      email: r?.email || r?.name || '',
+      liveboard: ctx.liveboard,
+      format: ctx.format,
+      date: ctx.date,
+    };
+    frag.appendChild(emailPreviewCard(r, fillTemplate(subjectTpl, vars), fillTemplate(bodyTpl, vars), ctx.file));
+  });
+  wrap.replaceChildren(frag);
+}
+
+function emailPreviewCard(r, subject, body, file) {
+  const card = el('div', 'wh-email-card');
+  const ext = r?.type === 'EXTERNAL_EMAIL';
+
+  const to = el('div', 'wh-email-row');
+  const toK = el('span', 'wh-email-k'); toK.textContent = 'To';
+  const toV = el('span', 'wh-email-v'); toV.textContent = r?.email || r?.name || '—';
+  const tag = el('span', `wh-email-tag ${ext ? 'wh-email-tag--ext' : 'wh-email-tag--user'}`);
+  tag.textContent = ext ? 'EXT' : 'USER';
+  to.append(toK, toV, tag);
+
+  const subjRow = el('div', 'wh-email-row');
+  const sK = el('span', 'wh-email-k'); sK.textContent = 'Subject';
+  const sV = el('span', 'wh-email-v wh-email-subjline'); sV.textContent = subject;
+  subjRow.append(sK, sV);
+
+  const pre = el('pre', 'wh-email-preview-body');
+  pre.textContent = body;   // resolved template — textContent, never innerHTML
+
+  card.append(to, subjRow, pre);
+
+  if (file) {
+    const att = el('div', 'wh-email-attach');
+    const a = document.createElement('a');
+    a.className = 'wh-file'; a.href = `${API_BASE}${file.href}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = `📎 ${file.filename} · ${fmtBytes(file.size)}`;
+    att.appendChild(a);
+    card.appendChild(att);
+  }
+  return card;
+}
+
 // One delivery → a card. Scheduled-Liveboard deliveries get the batching card; KPI alerts and
 // anything else keep the classic head + body.
 function webhookCard(ev) {
@@ -1086,8 +1244,9 @@ function liveboardScheduleCard(ev) {
   const badge = el('span', `wh-badge ${ev.verified ? 'wh-badge--ok' : 'wh-badge--warn'}`);
   badge.textContent = ev.verified ? '✓ verified' : '⚠ unverified';
   badge.title = ev.verifyReason || '';
+  const eb = emailComposerBtn(ev);
   const pv = payloadViewer(ev);
-  head.append(pill, who, badge, pv.btn);
+  head.append(pill, who, badge, eb, pv.btn);
   card.appendChild(head);
   // (raw payload opens in a modal via pv.btn — no inline pane to survive the 4s poll re-render)
 
@@ -1504,10 +1663,18 @@ async function composerSendReal() {
   };
 
   const done = showBusy('Creating a real auto-firing schedule…');
-  const res = await Discovery.createSchedule(s.host, body);
+  let res;
+  try {
+    res = await Discovery.createSchedule(s.host, body);
+  } catch (err) {
+    // createSchedule can throw (relay unreachable, network) — otherwise the busy toast hangs forever.
+    res = { ok: false, error: err?.message || String(err) };
+  }
   if (!res.ok) {
-    done(`Schedule failed: ${res.error}`, 'error');
-    logEvent('Webhook', `✗ schedules/create: ${res.error}`);
+    const reason = String(res.error || 'unknown error');
+    done('Schedule failed — details below', 'error');
+    logEvent('Webhook', `✗ schedules/create: ${reason}`);
+    showRealScheduleError(reason);   // persistent, so a long/important message doesn't vanish with the toast
     return;
   }
   done(`Scheduled — auto-fires ~${fireHM} (~${mins} min), no click needed`, 'success');
@@ -1522,6 +1689,7 @@ function showRealScheduleHint(schedName, fireHM, mins, host, lbId) {
   if (!panel) return;
   let hint = panel.querySelector('.wh-comp-realhint');
   if (!hint) { hint = el('div', 'wh-comp-realhint'); panel.appendChild(hint); }
+  hint.className = 'wh-comp-realhint';   // reset in case a prior attempt left the --error styling
   hint.replaceChildren();
   const t = el('div', 'wh-comp-realhint-t');
   t.textContent = `✓ Real schedule created — auto-fires at ~${fireHM} (~${mins} min). No Send-now needed.`;
@@ -1535,6 +1703,25 @@ function showRealScheduleHint(schedName, fireHM, mins, host, lbId) {
     a.textContent = 'Open Liveboard → Send now (instant)';
     hint.appendChild(a);
   }
+}
+
+// Persistent error surfaced in the composer when a real schedule create fails — the toast is too brief
+// for a real TS error. reason is upstream text → textContent (never innerHTML). Reuses the hint slot so
+// a prior success/error box doesn't linger.
+function showRealScheduleError(reason) {
+  const panel = $('#wh-composer');
+  if (!panel) return;
+  let box = panel.querySelector('.wh-comp-realhint');
+  if (!box) { box = el('div', 'wh-comp-realhint'); panel.appendChild(box); }
+  box.className = 'wh-comp-realhint wh-comp-realhint--error';
+  box.replaceChildren();
+  const t = el('div', 'wh-comp-realhint-t');
+  t.textContent = '✗ Schedule create failed';
+  const b = el('div', 'wh-comp-realhint-b');
+  b.textContent = reason;   // the exact upstream reason (now legible, no more "[object Object]")
+  const tip = el('div', 'wh-comp-realhint-b');
+  tip.textContent = 'Common causes: a recipient user/group that doesn’t exist on this instance, the connected user lacking schedule/admin privileges, or the Liveboard not being schedulable. The full reason is also in the Event Log.';
+  box.append(t, b, tip);
 }
 
 function genericBody(payload) {

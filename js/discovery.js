@@ -77,10 +77,14 @@ async function restError(resp) {
     try {
       const e = JSON.parse(raw);
       const err = e?.error ?? e;
-      detail = err?.message || err?.debug || (typeof err === 'string' ? err : JSON.stringify(err)) || detail;
+      // .message/.debug are usually strings, but TS sometimes nests a non-string (object/array) there —
+      // taking it verbatim leaks "[object Object]" into the toast. Accept only a non-empty STRING, else
+      // fall back to the stringified error so the real reason always surfaces.
+      const pick = [err?.message, err?.debug].find((v) => typeof v === 'string' && v.trim());
+      detail = pick || (typeof err === 'string' ? err : JSON.stringify(err)) || detail;
     } catch (_) { detail = raw.slice(0, 300); }
   }
-  return detail;
+  return String(detail).slice(0, 500);
 }
 
 /**
@@ -407,17 +411,19 @@ export async function downloadLiveboardReport(host, liveboardId, format = 'PDF',
     });
     if (!resp.ok) {
       // Read the body once as text, then try to parse — the 400 error object is generic, so dig
-      // through .message/.debug and fall back to the raw text so the real reason surfaces.
+      // through .message/.debug and fall back to the raw text so the real reason surfaces. Only take a
+      // non-empty STRING from message/debug — TS can nest a non-string there (→ "[object Object]").
       let detail = `HTTP ${resp.status}`;
       const raw = await resp.text().catch(() => '');
       if (raw) {
         try {
           const e = JSON.parse(raw);
           const err = e?.error ?? e;
-          detail = err?.message || err?.debug || (typeof err === 'string' ? err : JSON.stringify(err)) || detail;
+          const pick = [err?.message, err?.debug].find((v) => typeof v === 'string' && v.trim());
+          detail = pick || (typeof err === 'string' ? err : JSON.stringify(err)) || detail;
         } catch (_) { detail = raw.slice(0, 300); }
       }
-      return { ok: false, error: detail, status: resp.status };
+      return { ok: false, error: String(detail).slice(0, 500), status: resp.status };
     }
     const raw = await resp.blob();
     // A multi-viz CSV comes back as a ZIP — honour the server's Content-Type if it tells us.
