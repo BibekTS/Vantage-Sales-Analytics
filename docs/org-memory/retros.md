@@ -27,8 +27,8 @@ This log is the raw material for org retrospectives (BACKLOG M2).
 - 2026-07-13 (discover, parallel hunt ∥ drain): ran a find-only discovery hunt (4 lenses over the
   embed/runtime-filter ground) concurrently with an active S3 drain — safe because hunters are
   read-only and QA owned the gate ports. Multi-lens paid off twice: the correctness + data-integrity
-  lenses independently confirmed the same cfb string-epoch bug (S13), and the regression lens REFUTED
+  lenses independently confirmed the same cfb string-epoch bug (S14), and the regression lens REFUTED
   the correctness lens's low-confidence `onDone`-re-push suspicion by proving idempotency (dropped it
   pre-filing). Friction: the S3 drain committed + merged (#17) mid-hunt under the shared checkout, so
   the CEO re-read git state before filing and branched the records PR off the *post-#17* main — the
-  worktree discipline held. Filed S12–S16. No skill change needed.
+  worktree discipline held. Filed S13–S17. No skill change needed.
