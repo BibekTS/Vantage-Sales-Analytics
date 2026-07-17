@@ -42,6 +42,7 @@ export function defaultState() {
     // applied options (Action enum *keys*, resolved to enum values at render time)
     hiddenActions: [],
     disabledActions: [],
+    disabledActionReason: '',         // custom hover tooltip shown on greyed-out (disabled) actions
     customActions: [],                // [{ id, label, pos, type, webhook, urlTemplate }]
     runtimeParameters: [],            // [{ name, value }]
     activeFilters: [],                // [{ columnName, dataType, opKey, values }]
@@ -255,6 +256,7 @@ function sanitize(raw) {
 
   if (has('hiddenActions')) out.hiddenActions = strArr(raw.hiddenActions);
   if (has('disabledActions')) out.disabledActions = strArr(raw.disabledActions);
+  if (has('disabledActionReason')) out.disabledActionReason = str(raw.disabledActionReason, 512);
 
   if (has('customActions')) out.customActions = arr(raw.customActions).map(a => ({
     id: str(a?.id, 128), label: str(a?.label, 256),
