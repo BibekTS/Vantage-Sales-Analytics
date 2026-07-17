@@ -63,10 +63,10 @@ const ACTIONS = {
   search:   [...VIZ_DOWNLOAD_ACTIONS, 'Edit', 'Share', 'Pin', 'DrillDown', 'SpotIQAnalyze'],
   spotter:  ['Share', 'Pin', 'SpotIQAnalyze'],
   liveboard: [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
+    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze', 'AskAi'],
   viz:      [...VIZ_DOWNLOAD_ACTIONS, 'Share', 'Pin', 'Explore', 'DrillDown', 'SpotIQAnalyze'],
   fullapp:  [...LB_DOWNLOAD_ACTIONS, ...VIZ_DOWNLOAD_ACTIONS,
-    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze'],
+    'Edit', 'MakeACopy', 'Share', 'Pin', 'Explore', 'DrillDown', 'LiveboardInfo', 'LiveboardUsers', 'SpotIQAnalyze', 'AskAi'],
 };
 ACTIONS['liveboard-custom'] = ACTIONS.liveboard;
 ACTIONS['ai-highlights'] = ACTIONS.liveboard;
@@ -85,6 +85,7 @@ const ACTION_HINTS = {
   LiveboardUsers: 'Liveboard header: the strip of viewer avatars at the top (people the board is shared with / who have access — “recently visited / social proof”). Hide to remove those faces. Also toggleable in Display options.',
   LiveboardInfo: 'Liveboard header: the “Show Liveboard details” menu item (author + created/updated timestamps). Opens a panel; not shown inline on the board.',
   MakeACopy: 'Liveboard header ⋯ menu: the “Make a copy” item that lets a viewer duplicate the whole board into their own editable copy. Hide to stop end users cloning the board.',
+  AskAi: 'The Spotter / “Ask AI” icon on a Liveboard or full app (SDK enum: Action.AskAi — there is no Action.Spotter). Disable it to grey the icon out; set a Disabled-action reason below for the “premium service, contact…” hover message.',
 };
 
 // Per-embed display flags (the old gear schema, kept as-is but now in the inspector).
@@ -653,6 +654,7 @@ function render() {
   }, {
     hiddenActions: hiddenActionKeys(s).map(k => Action[k]).filter(Boolean),
     disabledActions: s.disabledActions.map(k => Action[k]).filter(Boolean),
+    disabledActionReason: s.disabledActionReason,
     customActions: buildEmbedCustomActions(s),
     runtimeParameters: s.runtimeParameters,
     flags: s.flags[s.section] || {},
@@ -1822,7 +1824,7 @@ function renderInspector() {
   body.appendChild(groupLbl('Appearance'));
   body.appendChild(sectionStyles(s));
   $('#insp-reset').onclick = () => {
-    setState({ flags: { ...s.flags, [s.section]: {} }, hiddenActions: [], disabledActions: [] });
+    setState({ flags: { ...s.flags, [s.section]: {} }, hiddenActions: [], disabledActions: [], disabledActionReason: '' });
     renderInspector(); render();
   };
 }
@@ -2228,6 +2230,11 @@ function sectionActions(s) {
     tbl.appendChild(row);
   });
   c.appendChild(tbl);
+  // Single global tooltip the SDK shows on hover over ANY disabled (greyed-out) action.
+  c.appendChild(textField('Disabled-action reason', s.disabledActionReason,
+    v => { setState({ disabledActionReason: v }); render(); },
+    'e.g. This is a premium service. Please contact xxx for further details.'));
+  c.appendChild(el('div', 'sec-note', 'Optional hover tooltip shown on every <strong>disabled</strong> (greyed-out) action — one message applies to all of them. It has no effect on hidden actions or when nothing is disabled.'));
   return accordion('Modify actions', s.hiddenActions.length + s.disabledActions.length, c);
 }
 function toggleAction(key, name, on) {
@@ -4815,6 +4822,7 @@ function enterDrill(drillId, filters) {
   }, {
     hiddenActions: getState().hiddenActions.map(k => Action[k]).filter(Boolean),
     disabledActions: getState().disabledActions.map(k => Action[k]).filter(Boolean),
+    disabledActionReason: getState().disabledActionReason,
     customActions: [],
     runtimeParameters: getState().runtimeParameters,
     flags: { runtimeFilters: filters },
@@ -5209,6 +5217,7 @@ function generateCode() {
   const hiddenKeys = hiddenActionKeys(s);
   if (hiddenKeys.length) opt.push(`  hiddenActions: [${hiddenKeys.map(a => `Action.${a}`).join(', ')}],`);
   if (s.disabledActions.length) opt.push(`  disabledActions: [${s.disabledActions.map(a => `Action.${a}`).join(', ')}],`);
+  if (s.disabledActions.length && s.disabledActionReason) opt.push(`  disabledActionReason: '${esc(s.disabledActionReason)}',`);
   if (s.customActions.length || exportMenu || pickerMenu || dateBtn) {
     opt.push('  customActions: [');
     s.customActions.forEach(a => opt.push(`    { id: '${esc(a.id)}', name: '${esc(a.label)}', position: CustomActionsPosition.${a.pos || 'PRIMARY'}, target: CustomActionTarget.${a.target || 'LIVEBOARD'} },`));

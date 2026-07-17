@@ -148,6 +148,7 @@ function bindAuthStatus(authEE) {
  * @param {{
  *   hiddenActions?: string[],
  *   disabledActions?: string[],
+ *   disabledActionReason?: string,
  *   customActions?: object[],
  * }} options
  * @returns {object}  The embed instance (so the caller can call .destroy() later)
@@ -200,11 +201,16 @@ function _extractErrorMessage(e) {
 
 export function doRender(section, config, callbacks, options = {}) {
   const { onDone, onError, onEvent } = callbacks;
-  const { hiddenActions = [], disabledActions = [], customActions = [], runtimeParameters = [], flags: flagsIn = {}, spotterQuery } = options;
+  const { hiddenActions = [], disabledActions = [], disabledActionReason = '', customActions = [], runtimeParameters = [], flags: flagsIn = {}, spotterQuery } = options;
   // exposeTranslationIDs is a per-embed ViewConfig flag (LiveboardViewConfig/SearchBarViewConfig, SDK 1.37.0+),
   // NOT a customizations.content key — putting it in init() is silently ignored. Merge it into the flags
   // that every embed constructor spreads, so it applies across all embed types.
-  const flags = config._exposeTranslationIDs ? { ...flagsIn, exposeTranslationIDs: true } : flagsIn;
+  // disabledActionReason is likewise a base ViewConfig option (the hover tooltip for every disabled action),
+  // so fold it in here too — a fresh object each time, never mutating the caller's state.flags reference.
+  const flags = {
+    ...(config._exposeTranslationIDs ? { ...flagsIn, exposeTranslationIDs: true } : flagsIn),
+    ...(disabledActionReason ? { disabledActionReason } : {}),
+  };
   // Drop any parameter rows with an empty name — a blank entry causes ThoughtSpot's
   // Pinboard__setMultipleParameterOverride to return "Invalid ContextRequest".
   const validParams = runtimeParameters.filter(p => p.name && String(p.name).trim() !== '');
