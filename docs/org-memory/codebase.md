@@ -59,6 +59,47 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   claiming to supersede the S5 filter-clobbering finding (`cfbApply()`/`applyLiveFilters()`/
   `cfbBuild` wiping each other). **Not yet re-verified** — S5 is still open; verify before
   building on this claim.
+- 2026-07-13 (discover, filed S14): CFB (custom-filter-bar) date columns emit STRING epoch runtime
+  filters → silently dropped by TS. `buildParentRuntimeFilters().fromCfb` (app.js:3872) passes
+  `cfbSelected` values untouched; only `fromActive` (app.js:3876) runs `dateAwareValues`. Values are
+  stringified at load (`String(v)` app.js:3087) + DOM `cb.value` (app.js:3379); the code generator
+  quotes them too (app.js:4487). Two-lens confirmed (correctness + data-integrity). Distinct from S5.
+- 2026-07-13 (discover, filed S16): Inspector runtime date-RANGE upper bound uses start-of-day —
+  `readValues` (app.js:1924) computes `isoToEpochSec(to)` (00:00:00 UTC) instead of
+  `isoToEndOfDayEpochSec` as `applyDateFilterViaRuntime` (app.js:1657) does → `BW_INC` drops the final
+  day's rows on DATE_TIME columns; day-granular DATE columns are unaffected.
+- 2026-07-13 (discover, filed S15): `render()` (app.js:582) has FOUR exit paths but only
+  `ai-insights` (app.js:606) and the main path (app.js:615) call `currentEmbed.destroy()`. The
+  `!s.host` (app.js:593) and `needsMissing` (app.js:596-601) early returns LEAK the prior embed and
+  leave `currentEmbed` non-null-but-stale → HostEvents route to the hidden wrong board via the
+  `!currentEmbed` guards (app.js:662/3612/1641).
+- 2026-07-13 (discover, filed S17): the 4s `fallback` overlay-hide timer is a per-render `const`
+  (app.js:624; `enterDrill` app.js:3906) with no module handle; overlapping renders within 4s orphan
+  the prior timer → spurious `setOverlay('hidden')` + "Embed handed off…" log against the live embed.
+- 2026-07-13 (discover, AUDITED CLEAN): `embed.destroy()`-before-re-render holds on both live render
+  SITES — `render()` destroys at app.js:615 before `doRender` (:634); `enterDrill()` destroys at
+  app.js:3899 before `doRender` (:3908). (The BUG is the early-return exits that leave *no* new render
+  — S15, above.) The Inspector **activeFilters** date path is correct: epoch strings in state coerced
+  to NUMBERS via `dateAwareValues` (app.js:1618, `Number.isFinite` NaN guard) at trigger time, UTC via
+  `Date.UTC` (`isoToEpochSec` app.js:1589). `pushRuntimeFilters` (app.js:661) honors
+  UpdateRuntimeFilters-APPENDS — computes empty-`values` clears for applied-minus-desired columns and
+  resets `appliedRuntimeCols` per render (:633). `onDone` fires on 5 SDK events but is idempotent
+  (`pushRuntimeFilters` resends the full desired set; `cfbBuild` has `_cfbBuilding` dedupe) — no
+  double-apply. Remaining filter defects are ONLY S14 (cfb string epochs) + S16 (range upper bound).
+
+## Custom actions / navigation
+
+- 2026-07-13 (discover, filed S13): `urlTemplate` is the ONE navigable hash-derived URL that skips
+  the app's scheme guard. `state.js:262` sanitizes it with `str()` (length only), unlike `host`
+  (state.js:246) and `cssUrl` (state.js:336) which use `validHost()` ("blocks javascript:/data:").
+  A `#s=`-supplied `url` custom action with `urlTemplate:"javascript:…"` (no `{{}}` placeholder, so
+  `.replace()` is a no-op) reaches `window.open(url,'_blank','noopener')` (app.js:3761-3763) and the
+  `javascript:` scheme executes. `noopener` severs `window.opener` but does not stop script execution.
+- 2026-07-13 (discover, AUDITED CLEAN, security lens): secrets/tokens are never serialized or
+  persisted — the discovery bearer is in-memory only (discovery.js:9-12), the secret_key never
+  reaches the browser, the token inspector redacts + uses `textContent`. Runtime filters are NOT
+  relied on as a security boundary anywhere in the embed/filter path; entitlements go through
+  server-side token claims in `js/auth.js` (`group_identifiers`/`variable_values`), per CLAUDE.md.
 
 ## Gates
 
