@@ -2095,6 +2095,18 @@ function toggleField(label, value, onChange, hint) {
   return f;
 }
 
+// Compact guide: a short always-visible line + an ⓘ toggle that reveals the full help text.
+// Keeps dense sections (e.g. Custom styles) scannable while every guide stays one click away.
+// Native <details> — accessible, keyboard-friendly, no JS wiring. Both args are static,
+// developer-authored strings (may carry intentional &lt;…&gt; entities), so innerHTML is safe.
+function infoHint(brief, full) {
+  const d = el('details', 'fld-info');
+  const sum = el('summary', 'fld-info-sum');
+  sum.innerHTML = `<span class="fld-info-brief">${brief}</span><span class="fld-info-i" aria-label="More info" title="More info">i</span>`;
+  d.append(sum, el('div', 'fld-info-body', full));
+  return d;
+}
+
 // — Display flags —
 function sectionDisplay(s) {
   const c = el('div', 'sec-body');
@@ -3207,32 +3219,41 @@ let candSelected = null;
 
 function sectionStyles(s) {
   const c = el('div', 'sec-body');
-  c.appendChild(el('div', 'sec-note', 'Variables re-theme the embed (documented, stable). Rules (rules_UNSTABLE) target elements by CSS selector — powerful, but selectors may shift across TS releases.'));
+  c.appendChild(infoHint(
+    'Variables re-theme the embed; Rules target elements by CSS selector.',
+    'Variables re-theme the embed (documented, stable). Rules (rules_UNSTABLE) target elements by CSS selector — powerful, but selectors may shift across TS releases.'));
 
+  // Each area below is its own collapsed-by-default sub-accordion — the section stays scannable
+  // and the user expands only the one they need. Open state persists via openAccordions (title-keyed).
+
+  // ── CSS variables ─────────────────────────────────────────────────────
+  const varsBody = el('div', 'sec-body');
   // Theme Builder — build a theme visually in ThoughtSpot, then paste the variables back here.
   const tbLink = el('a', 'sty-tb-link');
   tbLink.href = 'https://try-everywhere.thoughtspot.cloud/v2/#/everywhere/playground/theme-builder';
   tbLink.target = '_blank'; tbLink.rel = 'noopener noreferrer';
   tbLink.innerHTML = '<span>🎨 Open ThoughtSpot Theme Builder</span><span class="sty-tb-arrow">↗</span>';
-  c.appendChild(tbLink);
-  c.appendChild(el('div', 'fld-hint', 'Design a theme visually there, then paste its generated variables or CSS into the box below.'));
-
+  varsBody.appendChild(tbLink);
+  varsBody.appendChild(el('div', 'fld-hint', 'Design a theme visually there, then paste its generated variables or CSS into the box below.'));
   // Variables — with autocomplete over the documented --ts-var catalog
-  c.appendChild(el('div', 'sub-lbl', 'CSS variables'));
   const dl = el('datalist'); dl.id = 'ts-var-list';
   TS_VAR_ALL.forEach(name => { const o = el('option'); o.value = name; dl.appendChild(o); });
-  c.appendChild(dl);
+  varsBody.appendChild(dl);
   const vars = el('div', 'rows');
   Object.entries(s.styles.variables).forEach(([k, v]) => vars.appendChild(kvRow(k, v, 'variables')));
-  c.appendChild(vars);
+  varsBody.appendChild(vars);
   const addVar = el('button', 'sec-add', '+ Add variable');
   addVar.addEventListener('click', () => { const st = { ...getState().styles }; st.variables = { ...st.variables, '': '' }; setState({ styles: st }); renderInspector(); });
-  c.appendChild(addVar);
+  varsBody.appendChild(addVar);
+  c.appendChild(accordion('CSS variables', Object.keys(s.styles.variables).length, varsBody));
 
+  // ── CSS rules (rules_UNSTABLE) ────────────────────────────────────────
+  const rulesBody = el('div', 'sec-body');
   // Element rules — ONE smart input; the kind of paste is auto-detected.
-  c.appendChild(el('div', 'sub-lbl', 'CSS rules (rules_UNSTABLE)'));
   const pasteWrap = el('div', 'fld');
-  const pasteHint = el('div', 'fld-hint', 'One box, four inputs — paste any of: a CSS block, a rules_UNSTABLE object, element HTML from DevTools (right-click → Copy → Copy element), or an exported styles JSON. Auto-detected.');
+  const pasteHint = infoHint(
+    'Paste CSS, a rules object, DevTools element HTML, or styles JSON — auto-detected.',
+    'One box, four inputs — paste any of: a CSS block, a rules_UNSTABLE object, element HTML from DevTools (right-click → Copy → Copy element), or an exported styles JSON. Auto-detected.');
   const pasteArea = el('textarea', 'inp');
   pasteArea.placeholder = '.selector { display: none !important; }\nrules_UNSTABLE: { \'[class*="…"]\': { … } }\n<button class="…">…</button>\n{ "variables": { … }, "rules": { … } }';
   pasteArea.style.cssText = 'height:92px;resize:vertical;font-family:var(--mono);font-size:11px;padding:7px 10px;';
@@ -3272,97 +3293,78 @@ function sectionStyles(s) {
     toast(`Added ${bits.join(' + ')}.`, 'success');
   });
   pasteWrap.append(pasteHint, pasteArea, pasteBtn);
-  c.appendChild(pasteWrap);
+  rulesBody.appendChild(pasteWrap);
 
-  if (styCandidates) c.appendChild(candidatePicker());
+  if (styCandidates) rulesBody.appendChild(candidatePicker());
 
   const rules = el('div', 'rows');
   Object.entries(s.styles.rules).forEach(([sel, decls]) => rules.appendChild(ruleRow(sel, decls)));
-  c.appendChild(rules);
+  rulesBody.appendChild(rules);
   const addRule = el('button', 'sec-add', '+ Add rule');
   addRule.addEventListener('click', () => { const st = { ...getState().styles }; st.rules = { ...st.rules, '': {} }; setState({ styles: st }); renderInspector(); });
-  c.appendChild(addRule);
+  rulesBody.appendChild(addRule);
+  c.appendChild(accordion('CSS rules (rules_UNSTABLE)', Object.keys(s.styles.rules).length, rulesBody));
 
-  // Advanced — hosted stylesheet + share/import
-  c.appendChild(el('div', 'sub-lbl', 'Advanced'));
-  c.appendChild(textField('Stylesheet URL (customCSSUrl)', s.styles.cssUrl, v => {
-    const st = { ...getState().styles }; st.cssUrl = v; setState({ styles: st });
-  }, 'https://cdn.example.com/ts-theme.css'));
-  c.appendChild(el('div', 'fld-hint', 'Loads before the inline overrides above (they win on conflict). The URL host must be allowlisted under Develop → Security settings → CSP style-src on your TS instance.'));
-  const exportBtn = el('button', 'sec-add', '⧉ Copy styles JSON');
-  exportBtn.addEventListener('click', async () => {
-    const cur = getState().styles;
-    const json = JSON.stringify({ variables: cur.variables, rules: cur.rules, ...(cur.cssUrl && { cssUrl: cur.cssUrl }) }, null, 2);
-    try { await navigator.clipboard.writeText(json); toast('Styles JSON copied — paste it into the box above on any setup to import.', 'success'); }
-    catch { toast('Clipboard unavailable — copy the customizations block from the SDK Code tab instead.', 'error'); }
-  });
-  c.appendChild(exportBtn);
+  // ── Text overrides — customizations.content. Sibling of customizations.style above. ──
+  const txtBody = el('div', 'sec-body');
+  txtBody.appendChild(infoHint(
+    'Relabel on-screen UI text in the embed (customizations.content).',
+    'Relabel on-screen UI text in the embed (customizations.content). UI-only — this does NOT change exported CSV / XLSX / PDF, which ThoughtSpot renders server-side. Only system text is overridable, not user-created names or titles.'));
 
-  // Text overrides (Beta) — customizations.content. Sibling of customizations.style above.
-  const betaLbl = el('div', 'sub-lbl');
-  betaLbl.innerHTML = 'Text overrides <span class="sty-beta">Beta</span>'; // static markup, no user data
-  c.appendChild(betaLbl);
-  c.appendChild(el('div', 'sec-note', 'Relabel on-screen UI text in the embed (customizations.content). UI-only — this does NOT change exported CSV / XLSX / PDF, which ThoughtSpot renders server-side. Only system text is overridable, not user-created names or titles.'));
-
-  // strings — literal, case-sensitive, replaces EVERY matching substring
-  c.appendChild(el('div', 'fld-hint', 'Literal swaps (strings): left = exact UI text, right = replacement. Case-sensitive and global, so order matters — define a longer phrase before the word it contains (e.g. "Pin to Liveboard" before "Liveboard").'));
-  const strs = el('div', 'rows');
-  Object.entries(s.styles.strings).forEach(([k, v]) => strs.appendChild(strRow(k, v, 'strings', 'Liveboard', 'Dashboard')));
-  c.appendChild(strs);
-  const addStr = el('button', 'sec-add', '+ Add text swap');
-  addStr.addEventListener('click', () => { const st = { ...getState().styles }; st.strings = { ...st.strings, '': '' }; setState({ styles: st }); renderInspector(); });
-  c.appendChild(addStr);
-
-  // stringIDs — precise per-ID overrides; win over a literal swap on conflict
-  c.appendChild(el('div', 'fld-hint', 'ID-based swaps (stringIDs): left = ThoughtSpot string ID, right = replacement. Precise and stable, and wins over a literal swap on conflict. Turn on "Show translation IDs" below to discover an ID — each label then renders as &lt;string[stringID]&gt; (e.g. &lt;Liveboards[Facet.objectType.pinboards]&gt;). Then paste a copied label into the Extract box to auto-add rows — or paste a whole label straight into a left field and it keeps just the ID.'));
-  const sids = el('div', 'rows');
-  Object.entries(s.styles.stringIDs).forEach(([k, v]) => sids.appendChild(strRow(k, v, 'stringIDs', 'Facet.objectType.pinboards', 'Dashboards')));
-  c.appendChild(sids);
-  const addSid = el('button', 'sec-add', '+ Add string ID');
-  addSid.addEventListener('click', () => { const st = { ...getState().styles }; st.stringIDs = { ...st.stringIDs, '': '' }; setState({ styles: st }); renderInspector(); });
-  c.appendChild(addSid);
-
-  // Discovery aid — reload the embed with exposeTranslationIDs so every label renders as its
-  // string ID (<label[String.Id]>). Read the ID for the text you want, add a swap above, toggle off.
+  // Discovery aid (first) — reload the embed with exposeTranslationIDs so every label renders as its
+  // string ID (<label[String.Id]>). Read the ID for the text you want, add a swap below, toggle off.
   const expose = el('div', 'sty-expose' + (s.styles.exposeIds ? ' sty-expose--on' : ''));
   expose.appendChild(toggleField('Show translation IDs', s.styles.exposeIds, (on) => {
     setState({ styles: { ...getState().styles, exposeIds: on } });
     applyConfig(); render(); renderInspector();
-  }, 'Reloads the embed with exposeTranslationIDs=true — every label shows as <string[stringID]>. Copy the ID into a swap above, then turn this off.'));
+  }, 'Reloads the embed so every label shows as || text [ID] ||. Copy the ID into a swap below, then turn off.'));
   expose.appendChild(el('div', 'fld-hint', s.styles.exposeIds
-    ? 'ON — the embed now renders each label as &lt;string[stringID]&gt;, e.g. &lt;Liveboards[Facet.objectType.pinboards]&gt;. Copy the ID inside the [ ] into a swap above, then turn this off to see normal text.'
-    : 'Reloads the embed showing every label as its string ID, so you can find the one to swap.'));
-  c.appendChild(expose);
+    ? 'ON — labels now show as || text [ID] ||, e.g. || Edit [EDIT] ||. Copy what\'s inside the [ ] into a swap below, then turn this off.'
+    : 'Shows every label as || text [ID] || so you can grab the ID to swap.'));
+  txtBody.appendChild(expose);
 
-  // Bulk capture — paste labels copied from the embed (with "Show translation IDs" on) and auto-create
-  // a swap row per unique [stringID], seeding the replacement with the original text to edit. Rows are
-  // appended straight into `sids` above (no full re-render) so this status line survives.
-  const grab = el('div', 'sty-idpaste');
-  grab.appendChild(el('div', 'fld-hint', 'Easier than typing: with "Show translation IDs" on, select a label in the embed, copy it, paste it (or several) below, and Extract — one row is created per ID with the original wording prefilled for you to edit.'));
-  const ta = el('textarea', 'inp sty-idpaste-ta');
-  ta.rows = 3;
-  ta.placeholder = 'Paste exposed labels, e.g.\n|| AI Highlights [liveboard.highlights.title] ||\nCountry || (Select) [checkboxFilter.emptyFilterTextPlaceholder] ||';
-  grab.appendChild(ta);
-  const grabMsg = el('div', 'fld-hint');
-  const grabBtn = el('button', 'sec-add', '⤵ Extract IDs → add rows');
-  grabBtn.addEventListener('click', () => {
-    const pairs = parseExposedLabels(ta.value);
-    if (!pairs.length) { grabMsg.textContent = 'No [stringID] found — make sure you copied a label while "Show translation IDs" was on.'; return; }
-    const st = { ...getState().styles }; const b = { ...st.stringIDs };
-    let added = 0;
-    pairs.forEach(({ id, text }) => {
-      if (id in b) return; // already have a row for this ID — don't clobber its replacement
-      b[id] = text || '';
-      sids.appendChild(strRow(id, text || '', 'stringIDs', 'Facet.objectType.pinboards', 'Dashboards'));
-      added++;
-    });
-    st.stringIDs = b; setState({ styles: st });
-    ta.value = '';
-    const dup = pairs.length - added;
-    grabMsg.textContent = `Added ${added} new ID${added === 1 ? '' : 's'}${dup ? ` (${dup} already present)` : ''}. Edit the right column above, then Apply.`;
+  // strings — literal, case-sensitive, replaces EVERY matching substring
+  txtBody.appendChild(infoHint(
+    'Literal swaps (strings): left = exact UI text, right = replacement.',
+    'Literal swaps (strings): left = exact UI text, right = replacement. Case-sensitive and global, so order matters — define a longer phrase before the word it contains (e.g. "Pin to Liveboard" before "Liveboard").'));
+  const strs = el('div', 'rows');
+  Object.entries(s.styles.strings).forEach(([k, v]) => strs.appendChild(strRow(k, v, 'strings', 'Liveboard', 'Dashboard')));
+  txtBody.appendChild(strs);
+  const addStr = el('button', 'sec-add', '+ Add text swap');
+  addStr.addEventListener('click', () => { const st = { ...getState().styles }; st.strings = { ...st.strings, '': '' }; setState({ styles: st }); renderInspector(); });
+  txtBody.appendChild(addStr);
+
+  // stringIDs — precise per-ID overrides; win over a literal swap on conflict
+  txtBody.appendChild(infoHint(
+    'ID-based swaps: left = string ID, right = replacement — wins over a literal swap.',
+    'Left = ThoughtSpot string ID, right = your replacement. Turn on "Show translation IDs" above: every label then shows as || text [ID] ||, e.g. || Edit [EDIT] ||. Copy what\'s inside the [ ] into the left field — that\'s the ID.'));
+  const sids = el('div', 'rows');
+  Object.entries(s.styles.stringIDs).forEach(([k, v]) => sids.appendChild(strRow(k, v, 'stringIDs', 'Facet.objectType.pinboards', 'Dashboards')));
+  txtBody.appendChild(sids);
+  const addSid = el('button', 'sec-add', '+ Add string ID');
+  addSid.addEventListener('click', () => { const st = { ...getState().styles }; st.stringIDs = { ...st.stringIDs, '': '' }; setState({ styles: st }); renderInspector(); });
+  txtBody.appendChild(addSid);
+  c.appendChild(accordion('Text overrides',
+    Object.keys(s.styles.strings).length + Object.keys(s.styles.stringIDs).length + (s.styles.exposeIds ? 1 : 0),
+    txtBody));
+
+  // ── Advanced — hosted stylesheet + share/import ───────────────────────
+  const advBody = el('div', 'sec-body');
+  advBody.appendChild(textField('Stylesheet URL (customCSSUrl)', s.styles.cssUrl, v => {
+    const st = { ...getState().styles }; st.cssUrl = v; setState({ styles: st });
+  }, 'https://cdn.example.com/ts-theme.css'));
+  advBody.appendChild(infoHint(
+    'Loads before the inline overrides above (they win on conflict).',
+    'Loads before the inline overrides above (they win on conflict). The URL host must be allowlisted under Develop → Security settings → CSP style-src on your TS instance.'));
+  const exportBtn = el('button', 'sec-add', '⧉ Copy styles JSON');
+  exportBtn.addEventListener('click', async () => {
+    const cur = getState().styles;
+    const json = JSON.stringify({ variables: cur.variables, rules: cur.rules, ...(cur.cssUrl && { cssUrl: cur.cssUrl }) }, null, 2);
+    try { await navigator.clipboard.writeText(json); toast('Styles JSON copied — paste it into the CSS rules box on any setup to import.', 'success'); }
+    catch { toast('Clipboard unavailable — copy the customizations block from the SDK Code tab instead.', 'error'); }
   });
-  grab.append(grabBtn, grabMsg);
-  c.appendChild(grab);
+  advBody.appendChild(exportBtn);
+  c.appendChild(accordion('Advanced', s.styles.cssUrl ? 1 : 0, advBody));
 
   const apply = el('button', 'sec-apply', 'Apply — reload embed');
   apply.addEventListener('click', () => { applyConfig(); render(); });
