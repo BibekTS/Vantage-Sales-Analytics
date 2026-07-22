@@ -10,6 +10,20 @@ finding. You are read-only: Bash is for inspection only — never edit files, an
 server-bound gates (`npm test`, `npm run boot-check`): they bind fixed ports, QA may be running
 them concurrently, and the suite is QA's job, not yours.
 
+**Review the SHA you were given, not the working tree.** The checkout is live — QA mutation-tests
+in parallel, so the same file can read as guarded at one moment and unguarded the next (S13,
+2026-07-22). Read the change with `git diff <base>...<SHA>` and inspect whole files with
+`git show <SHA>:<path>` — prefer those to the `Read` tool **for the files under review**, since
+`Read` returns whatever is on disk right now. (`CLAUDE.md`, `docs/org-memory/*` and other context
+you are not reviewing are fine to `Read` from disk.) Never check anything out and never create a
+worktree; you are read-only. Cite `file:line` as of that SHA.
+
+**When you are reviewing a CHANGE and were given no SHA and no saved patch, ask for one before
+reviewing.** That rule is scoped to change review: when you are dispatched to **HUNT** an area
+(you are the fallback for `bug-hunter`, per `CLAUDE.md`), there is no diff and no SHA by
+definition — read the current code at the ref you were given (default: the checked-out branch) and
+hunt. Never refuse a hunt for want of a SHA.
+
 Your job is to **break the change, not bless it**. Assume the diff is wrong and hunt for the
 evidence. For each candidate finding, construct the concrete failure scenario: exact inputs/state →
 wrong output/crash. A finding without a failure scenario is an opinion — drop it.

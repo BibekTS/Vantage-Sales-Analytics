@@ -80,20 +80,103 @@ Records step (step 6).
   parallel/independent items use **worktree isolation**, one implementer per item. The
   implementer follows every rule in `CLAUDE.md` (state.js sanitize discipline, `textContent`
   not `innerHTML`, `embed.destroy()` before re-render, numeric/UTC date epochs, `pushRuntimeFilters`).
+- **The implementer commits its work to its branch before handing back** — never "leave it
+  uncommitted so the reviewers can see it". A dirty shared working tree is unowned: in the S13
+  cycle a concurrent actor's `git commit` swept an uncommitted P1 security fix into ITS unrelated
+  feature commit on another branch, leaving the fix's own branch empty (2026-07-22). The handback
+  must carry the **commit SHA** — everything downstream reads that SHA, not the tree. If an
+  implementer ever returns a dirty tree anyway, the CEO commits it on the branch immediately,
+  before dispatching anyone else — but with the same staging discipline the implementer owes:
+  `git add` **only the paths the implementer's report named**, each spelled out, and **never
+  `git add -A` / `git add .` / `git commit -am`**. The CEO is precisely the actor that does not
+  know what the implementer touched; a blanket add there sweeps a concurrent session's in-flight
+  edit into this branch (the S13 incident with the roles swapped). If `git status` shows anything
+  the report did not name, **stop the cycle and hand it to the human** rather than committing it.
+  Rewording or amending is available up to the moment QA is dispatched, never after (step 7);
+  recovering a swept diff is never available at all.
 
 ## 4. Review Board ∥ QA — audit and verify in parallel
-Once the diff is in hand, launch the Review Board and QA **together, in one message** — they are
-independent reads of the same diff:
+Parallel reads are only safe against an **immutable artifact**. Hand every agent in this phase the
+implementer's **commit SHA** from step 3 — never "review the working tree". The checkout mutates
+underneath them: QA's mutation test alone flips a guard off and back on, and in the S13 cycle a
+reviewer read `js/app.js` as guarded at 09:58 and unguarded at 10:04 and correctly refused to trust
+either read. With the SHA named, launch the Review Board and QA **together, in one message** — they
+are independent reads of the same commit:
 - **Review Board:** spawn **`reviewer`** agents, one per applicable lens (correctness always;
   security when the diff touches auth, serialization, the server, or DOM sinks; regression when it
-  touches existing behavior) — all in the same message, each prompted to REFUTE the diff. Also run
-  `/code-review` (medium or higher). For security-adjacent diffs, add `/security-review`.
-- **QA (the gate):** delegate to the **`qa-verifier`** agent, capturing output for the PR body.
+  touches existing behavior) — all in the same message, each prompted to REFUTE the diff **at that
+  SHA** (they read it with `git diff <base>...<SHA>` and `git show <SHA>:<path>`; they never check
+  anything out). Also run `/code-review` (medium or higher), and for security-adjacent diffs
+  `/security-review` — **naming the same artifact** (the SHA, or `<base>...<SHA>`) rather than
+  letting them default to the working tree. With the step-3 commit rule the tree is clean, so a
+  review that reports "no changes" was pointed at the wrong artifact; re-run it against the SHA
+  instead of recording it as a clean diff.
+- **QA (the gate):** delegate to the **`qa-verifier`** agent **with the SHA**, capturing output for
+  the PR body. QA runs the bar — and any mutation test — in a disposable worktree at that SHA
+  (recipe in step 5), never in the shared checkout. That isolates files, not ports: **in this phase**
+  QA is the only actor allowed to run the server-bound gates, one branch at a time.
 
-Fix every **confirmed** correctness finding (dispatch the implementer again), then **re-run QA** —
-a diff that changed after verification is unverified.
+Fix every **confirmed** correctness finding (dispatch the implementer again — it commits the fix,
+producing a **new SHA**), then **re-run QA against the new SHA** and give the reviewers that SHA
+too. A diff that changed after verification is unverified, and a SHA that changed after review is
+unreviewed. **Carve-out (an allow-list, deliberately — deny-lists fail open):** a commit that
+touches **nothing except** `BACKLOG.md` and `docs/org-memory/*` does NOT invalidate review or QA —
+that is what makes steps 6 and 7 possible at all. **Every other commit does**, whatever it touches,
+and requires re-running both the Review Board and QA against the new SHA. **There is no third
+category:** if a path is not in that two-item list, it invalidates — `package.json`, `config.js`,
+`vendor/`, and the org's own `.claude/*` machinery included. Do not reason from "it isn't product
+code"; reason from "is this commit's file list a subset of those two entries?". Step 7 states the
+same partition ("may differ **only** by records-only commits") — they are one rule.
 
 ## 5. QA — the bar the qa-verifier runs
+QA works in a **disposable worktree at the SHA under test**, not the shared checkout — the
+feature-specific check often mutates product code to prove the probe has teeth, and that mutation
+must be invisible to the reviewers reading in parallel and impossible to commit.
+
+> ⚠️ **cwd and shell variables do NOT persist between an agent's Bash calls.** Each call starts
+> back at the repo root with `$SCRATCH` unset — and `cd "$SCRATCH"` with an unset variable is
+> `cd ""`, which succeeds and leaves you in the SHARED CHECKOUT, so the isolation fails *open* and
+> the mutation test lands on the tree the reviewers are reading. Therefore: the setup call **echoes
+> the absolute paths**, you record them, and **every later command is a single self-contained chain
+> that begins by `cd`-ing to the literal absolute scratch path.** Never a bare `cd`, never a
+> variable, never a relative path.
+
+```bash
+# 1. SETUP — one Bash call. Write down BOTH printed paths; nothing here survives to the next call.
+ROOT="$PWD"; SCRATCH="$(mktemp -d)/qa"
+# a worktree carries COMMITTED content only — this is why the implementer must commit before handback
+git worktree add --detach "$SCRATCH" <SHA>
+ln -s "$ROOT/node_modules" "$SCRATCH/node_modules"   # node_modules is gitignored, so the worktree has none
+echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two literals into every call below
+
+# 2. THE BAR — one self-contained chain per call, pasting the literal path from the echo:
+cd /abs/scratch/from/the/echo && npm test            # scripts derive their root from their own path
+cd /abs/scratch/from/the/echo && npm run boot-check
+
+# 3. THE MUTATION TEST — same self-contained shape, still INSIDE the worktree. Revert the fix at
+#    the scratch path, re-run the probe, confirm it now FAILS. Worked example:
+cd /abs/scratch/from/the/echo && git checkout <base> -- js/app.js && npm run boot-check
+
+# 4. CLEANUP — the LAST thing you do. NEVER before the mutation test: once the worktree is gone
+#    there is nowhere safe to mutate, and the tree you would reach for is the shared checkout.
+#    `git -C` makes it cwd-independent, so it still exits 0 when run from inside the worktree it is
+#    deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
+git -C /abs/root/from/the/echo worktree remove --force /abs/scratch/from/the/echo && \
+  git -C /abs/root/from/the/echo worktree prune      # discards every mutation inside the worktree
+```
+
+Removing the worktree discards every mutation **inside the worktree** — that is the safety property.
+`node_modules` is a **symlink into the shared checkout**, so it is OUT OF SCOPE: `worktree remove`
+deletes the link, not its target, and a mutation under `node_modules/` survives, is gitignored (no
+dirty-tree signal), and silently corrupts every later gate run. Never mutate anything under it.
+
+`vendor/` and `.env` are gitignored too, so the worktree has neither. That is fine **today** because
+the SDK is loaded from the CDN and both gate scripts force their own clean env — re-check this if
+either changes.
+
+It isolates files, not ports — `npm test` (34917) and `npm run boot-check` (34921) still bind fixed
+ports, so the gates stay serialized (M8) exactly as before.
+
 1. **ESM parse** — copy each changed `js/*.js` to `.mjs` and `node --check`.
 2. **`npm test`** — all checks green. Never weaken an assertion; never hardcode the check count.
 3. **`npm run boot-check`** — the headless frontend gate (tool shell mounts, 0 JS errors, only the
@@ -118,12 +201,38 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
   missed something, a rule was ambiguous, effort was duplicated, a skill or agent instruction was
   wrong or unclear — append an M-row (goal 3: the org improves itself). The org's own machinery
   (`.claude/skills/*`, `.claude/agents/*`, `docs/*-playbook.md`, `BACKLOG.md`) is deliberately NOT
-  guard-protected: improvements to it ship through the same branch-and-PR flow as app code.
+  guard-protected: improvements to it ship through the same branch-and-PR flow as app code — which
+  means they go through Review Board and QA like anything else. "Not guard-protected" is never a
+  licence to slip such an edit into an already-verified PR: apart from `BACKLOG.md` and
+  `docs/org-memory/*`, those paths are **not** records-only, so a commit touching them after QA
+  invalidates review and QA per step 4. File the M-row; ship the machinery fix in its own cycle.
 
 ## 7. Operations — ship
 - Commit (message ends with the `Co-Authored-By: Claude Fable 5` trailer), push, and open a PR with
-  an **evidence section**: paste the smoke result, the boot-check summary, and the review outcome.
-  PR body ends with the `🤖 Generated with [Claude Code]` line.
+  an **evidence section**: name the **QA-verified SHA** and the **reviewed SHA** explicitly, then
+  paste the smoke result, the boot-check summary, and the review outcome. Naming the SHA is what
+  lets a human reconcile the evidence against the PR head — if the head differs, it may differ only
+  by records-only commits (see step 4's carve-out); say so. PR body ends with the
+  `🤖 Generated with [Claude Code]` line.
+- **The verified SHA must be reachable.** Operations pushes **that commit itself**, never a
+  rewritten replacement: after QA has run, **never `git commit --amend`, never rebase, never
+  force-push** this branch. Reword before dispatching QA, not after — an amend turns the verified
+  commit into an orphan, and a human running `git log <qa-verified-sha>..HEAD` gets
+  `fatal: bad object`. That evidence is not merely stale, it is **unfalsifiable**.
+- Before opening the PR, prove it mechanically and state the result in the evidence section:
+  ```bash
+  git merge-base --is-ancestor <qa-verified-sha> HEAD   # exit 0 = the verified commit is on the head
+  git log --name-only <qa-verified-sha>..HEAD           # must be empty or records-only (step 4)
+  ```
+  A non-zero exit means the verified artifact was rewritten away — stop, re-run QA against the real
+  head, and cite that SHA instead.
+- **Judge the second command on PATHS, never on subject lines.** Step 4's predicate is a file-list
+  question ("is this commit's file list a subset of those two entries?"), so read the file list:
+  `--name-only` (or `--stat`) prints it; `--oneline` prints only the subject the committing agent
+  chose, which a commit that also carries a stray `package.json` can make look records-only.
+  **Acceptance rule: every path printed must be `BACKLOG.md` or under `docs/org-memory/`.** If any
+  other path appears — whatever the subject line claims — the head is neither reviewed nor verified:
+  re-run the Review Board and QA against the new SHA, and only then open the PR citing that SHA.
 - Wait for the required checks: `smoke`, `esm-parse`, `guard` (plus advisory `boot`).
 - **Auto-merge if ALL hold:** every required check green ∧ code review found no confirmed
   correctness bug ∧ `guard` passed WITHOUT the `human-approved` label. Merge with
@@ -138,9 +247,12 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
 - A concise summary: what shipped, the evidence, any M-items filed, and the next open item the CEO
   would pick.
 - **Micro-retro (mandatory):** one line answering "did any skill, agent definition, or playbook
-  instruction mislead, block, or slow this cycle?" If yes: fix it in this same PR when trivial
-  (those files are not guard-protected), otherwise file an M-row. "No friction" is a valid answer;
-  silence is not.
+  instruction mislead, block, or slow this cycle?" If yes: fix it in this same PR **only if the PR
+  has not yet been QA'd**. Once QA has run, a `.claude/*` or `docs/*-playbook.md` edit is **not**
+  records-only, so per step 4 it invalidates review AND QA — and no CI check can catch a bad `.md`
+  edit, so nothing else would stop an unreviewed change to the org's own gate definitions. After QA,
+  **file an M-row instead**; do not reason from "those files are not guard-protected". "No friction"
+  is a valid answer; silence is not.
 
 ## Discovery mode (`/ceo-improve-cycle discover` and `discover fix`)
 

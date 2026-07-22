@@ -99,16 +99,38 @@ docs/org-memory/codebase.md before any work") and ends with a "Memory-worthy" ha
                    Verification plan. It designs; it does not build.
   • implementer  — tools: (all — the ONLY writer).  Executes an approved plan ON A BRANCH (never
                    main), matches codebase style, runs the gates before handing back, records any
-                   deviation from the plan. Never adds the human-approved label, never merges.
+                   deviation from the plan. COMMITS its work to its branch before handing back —
+                   UNCONDITIONALLY, green or red (a red gate is reported, not a reason to leave the
+                   tree dirty) — never leaves the fix only in the shared working tree, and returns
+                   the commit SHA. Stages only the paths its plan named: never `git add -A` /
+                   `commit -am`, which sweeps a concurrent session's edits into its commit; if
+                   `git status` shows untouched files, it stops and reports. Never adds the
+                   human-approved label, never merges.
   • reviewer     — tools: Read, Glob, Grep, Bash.  ADVERSARIAL. "Assume the diff is wrong and hunt
                    the evidence." Spawned one-per-LENS (correctness / security / regression /
                    performance). Every finding needs a concrete FAILURE SCENARIO — one without is
                    an opinion, drop it. Grades findings CONFIRMED / PLAUSIBLE. Does NOT run the
-                   port-binding gates (QA owns those).
+                   port-binding gates (QA owns those). Reviews an IMMUTABLE artifact — the
+                   implementer's commit SHA (`git show <SHA>:<path>`) or a saved patch — never the
+                   live working tree; if it is reviewing a CHANGE and was given neither, it asks for
+                   one before reviewing. CARVE-OUT: that rule is scoped to change review. When the
+                   same agent is dispatched to HUNT an area (it is the bug-hunter fallback) there is
+                   no diff and no SHA by definition — it reads the current code at the ref it was
+                   given and hunts. It must never refuse a hunt for want of a SHA.
   • qa-verifier  — tools: Bash, Read, Glob, Grep.  The GATE. Runs the full bar in order
                    (lint/typecheck → tests → build/smoke → a feature-specific check from the
-                   item's acceptance criteria) and reports output VERBATIM. Verifies; never fixes,
-                   never weakens a test. If a gate is red, report precisely and stop.
+                   item's acceptance criteria) and reports output VERBATIM. Runs the bar in a
+                   disposable worktree checked out at that SHA, so a mutation test (revert the fix,
+                   prove the probe fails) never touches the shared checkout. Asks for a SHA if given
+                   only a branch — never substitutes HEAD, never falls back to the shared checkout —
+                   and asserts it is an ancestor of that branch. NOTE for the worktree recipe: an
+                   agent's cwd and shell variables do NOT survive between Bash calls, so the setup
+                   call must ECHO the absolute scratch path, every later command must be a
+                   self-contained chain starting `cd <literal absolute path> && …`, and cleanup must
+                   use `git -C <repo root> worktree remove --force <path> && git -C <repo root>
+                   worktree prune` (cwd-independent, so it exits 0 from inside the deleted tree).
+                   Verifies; never fixes, never weakens a test. If a gate is red, report precisely
+                   and stop.
   • bug-hunter   — tools: Read, Glob, Grep, Bash.  DISCOVERY. Hunts NEW, unfiled bugs in an
                    assigned hunting-ground × lens (correctness / security / regression /
                    data-integrity / performance). Every finding carries a failure scenario +
@@ -142,9 +164,14 @@ when the items' product files are disjoint), `/improve-cycle discover` (hunt & F
       create branch `improve/<ID>-<slug>`, mark the row in-progress ON THE BRANCH → implementer
       builds. Independent items → worktree-isolated implementers, one each.
    4. REVIEW ∥ QA — launch the Review Board (reviewer per lens, each told to REFUTE) AND
-      qa-verifier together in one message. Also run /code-review and /security-review if available.
+      qa-verifier together in one message — both given the implementer's commit SHA, not the
+      working tree. Also run /code-review and /security-review if available.
       Fix every CONFIRMED finding (re-dispatch implementer), then RE-RUN QA — a diff that changed
-      after verification is unverified.
+      after verification is unverified. Express the re-run carve-out as an ALLOW-LIST, never a
+      deny-list of "product paths" (a deny-list fails open — a post-QA edit to package.json or to
+      the org's own .claude/* files would slip through un-reverified): a commit touching NOTHING
+      EXCEPT the records files (BACKLOG.md, docs/org-memory/*) does not invalidate review or QA;
+      EVERY other commit does, whatever it touches. There is no third category.
    5. QA BAR — lint/typecheck → tests → build/smoke → feature-specific check. Do not PR on red.
    6. RECORDS (before shipping, on the same branch) — update BACKLOG.md Status + commit it; fold
       every agent's Memory-worthy facts into docs/org-memory/codebase.md; append a one-line
