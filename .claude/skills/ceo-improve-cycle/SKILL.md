@@ -100,30 +100,57 @@ are independent reads of the same commit:
   security when the diff touches auth, serialization, the server, or DOM sinks; regression when it
   touches existing behavior) — all in the same message, each prompted to REFUTE the diff **at that
   SHA** (they read it with `git diff <base>...<SHA>` and `git show <SHA>:<path>`; they never check
-  anything out). Also run `/code-review` (medium or higher). For security-adjacent diffs, add
-  `/security-review`.
+  anything out). Also run `/code-review` (medium or higher), and for security-adjacent diffs
+  `/security-review` — **naming the same artifact** (the SHA, or `<base>...<SHA>`) rather than
+  letting them default to the working tree. With the step-3 commit rule the tree is clean, so a
+  review that reports "no changes" was pointed at the wrong artifact; re-run it against the SHA
+  instead of recording it as a clean diff.
 - **QA (the gate):** delegate to the **`qa-verifier`** agent **with the SHA**, capturing output for
   the PR body. QA runs the bar — and any mutation test — in a disposable worktree at that SHA
-  (recipe in step 5), never in the shared checkout. That isolates files, not ports: QA is still the
-  only actor allowed to run the server-bound gates, one branch at a time.
+  (recipe in step 5), never in the shared checkout. That isolates files, not ports: **in this phase**
+  QA is the only actor allowed to run the server-bound gates, one branch at a time.
 
 Fix every **confirmed** correctness finding (dispatch the implementer again — it commits the fix,
 producing a **new SHA**), then **re-run QA against the new SHA** and give the reviewers that SHA
 too. A diff that changed after verification is unverified, and a SHA that changed after review is
-unreviewed.
+unreviewed. **Carve-out:** records-only commits — `BACKLOG.md` and `docs/org-memory/*` — do NOT
+invalidate review or QA, which is what makes steps 6 and 7 possible at all. Any commit touching a
+product path (`js/`, `server.js`, `lib/`, `scripts/`, `*.html`, `*.css`) does, and requires re-running
+both the Review Board and QA against the new SHA.
 
 ## 5. QA — the bar the qa-verifier runs
 QA works in a **disposable worktree at the SHA under test**, not the shared checkout — the
 feature-specific check often mutates product code to prove the probe has teeth, and that mutation
-must be invisible to the reviewers reading in parallel and impossible to commit. From the repo root:
+must be invisible to the reviewers reading in parallel and impossible to commit.
+
+> ⚠️ **cwd and shell variables do NOT persist between an agent's Bash calls.** Each call starts
+> back at the repo root with `$SCRATCH` unset — and `cd "$SCRATCH"` with an unset variable is
+> `cd ""`, which succeeds and leaves you in the SHARED CHECKOUT, so the isolation fails *open* and
+> the mutation test lands on the tree the reviewers are reading. Therefore: the setup call **echoes
+> the absolute paths**, you record them, and **every later command is a single self-contained chain
+> that begins by `cd`-ing to the literal absolute scratch path.** Never a bare `cd`, never a
+> variable, never a relative path.
 
 ```bash
-SCRATCH="$(mktemp -d)/qa"
-git worktree add --detach "$SCRATCH" <SHA>          # committed content only — see step 3's commit rule
-ln -s "$PWD/node_modules" "$SCRATCH/node_modules"   # deps are gitignored; vendor/ and .env aren't needed
-cd "$SCRATCH" && npm test && npm run boot-check     # both scripts derive their root from their own path
-git worktree remove --force "$SCRATCH" && git worktree prune   # discards every mutation with it
+# 1. SETUP — one Bash call. Write down BOTH printed paths; nothing here survives to the next call.
+ROOT="$PWD"; SCRATCH="$(mktemp -d)/qa"
+git worktree add --detach "$SCRATCH" <SHA>           # committed content only — see step 3's commit rule
+ln -s "$ROOT/node_modules" "$SCRATCH/node_modules"   # node_modules is gitignored, so the worktree has none
+echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two literals into every call below
+
+# 2. THE BAR — one self-contained chain per call, pasting the literal path from the echo:
+cd /abs/scratch/from/the/echo && npm test            # scripts derive their root from their own path
+cd /abs/scratch/from/the/echo && npm run boot-check
+
+# 3. CLEANUP — `git -C` makes it cwd-independent, so it still exits 0 when run from inside the
+#    worktree it is deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
+git -C /abs/root/from/the/echo worktree remove --force /abs/scratch/from/the/echo && \
+  git -C /abs/root/from/the/echo worktree prune      # discards every mutation with it
 ```
+
+`vendor/` and `.env` are gitignored too, so the worktree has neither. That is fine **today** because
+the SDK is loaded from the CDN and both gate scripts force their own clean env — re-check this if
+either changes.
 
 It isolates files, not ports — `npm test` (34917) and `npm run boot-check` (34921) still bind fixed
 ports, so the gates stay serialized (M8) exactly as before.
@@ -156,8 +183,11 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
 
 ## 7. Operations — ship
 - Commit (message ends with the `Co-Authored-By: Claude Fable 5` trailer), push, and open a PR with
-  an **evidence section**: paste the smoke result, the boot-check summary, and the review outcome.
-  PR body ends with the `🤖 Generated with [Claude Code]` line.
+  an **evidence section**: name the **QA-verified SHA** and the **reviewed SHA** explicitly, then
+  paste the smoke result, the boot-check summary, and the review outcome. Naming the SHA is what
+  lets a human reconcile the evidence against the PR head — if the head differs, it may differ only
+  by records-only commits (see step 4's carve-out); say so. PR body ends with the
+  `🤖 Generated with [Claude Code]` line.
 - Wait for the required checks: `smoke`, `esm-parse`, `guard` (plus advisory `boot`).
 - **Auto-merge if ALL hold:** every required check green ∧ code review found no confirmed
   correctness bug ∧ `guard` passed WITHOUT the `human-approved` label. Merge with

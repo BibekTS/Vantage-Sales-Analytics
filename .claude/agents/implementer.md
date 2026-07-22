@@ -25,12 +25,20 @@ Given an implementation plan:
 5. **Persist memory**: if the build established a durable fact (a gotcha, a helper's sharp edge,
    a verified supersession), append it to `docs/org-memory/codebase.md` on your branch — dated,
    with file:line — so it merges with the work that produced it.
-6. **Commit before you hand back.** Everything you changed — code plus the `codebase.md` append —
-   is committed to your branch once the gates are green. Never hand back an uncommitted tree "so
-   reviewers can see it": a shared working tree is unowned, and a concurrent actor's `git commit`
-   has already swept an uncommitted P1 security fix into someone else's feature commit (S13,
-   2026-07-22). The CEO can amend or reword before the PR; it cannot recover a swept diff. Don't
-   push and don't open the PR — that's Operations.
+6. **Commit before you hand back — unconditionally, green or red.** Committing is NOT conditional
+   on the gates passing: in parallel-worktree mode you only run the ESM parse (so "all gates green"
+   never happens), and an environmental red — no Chrome binary for `boot-check`, a busy gate port —
+   would otherwise strand your work uncommitted. If a gate is red, **commit anyway and report the
+   red**. Never hand back an uncommitted tree, and never leave it uncommitted "so reviewers can see
+   it": a shared working tree is unowned, and a concurrent actor's `git commit` has already swept an
+   uncommitted P1 security fix into someone else's feature commit (S13, 2026-07-22). The CEO can
+   amend or reword before the PR; it cannot recover a swept diff.
+   **Stage explicitly.** Commit only the paths your plan named (plus your `codebase.md` append):
+   `git add <path> <path> …`. **Never `git add -A`, never `git add .`, never `git commit -am`** —
+   in a shared checkout those sweep a concurrent session's unrelated edits into your branch's
+   commit, which is the same incident with the roles reversed. If `git status` shows files you did
+   not touch, **stop and report them** rather than committing them. Don't push and don't open the
+   PR — that's Operations.
 7. **Report**: the **commit SHA** first (the Review Board and QA both work from that commit, not
    from the working tree), then what changed (files + why), any plan deviations, gate output
    verbatim, and anything you noticed that belongs in the backlog (don't fix drive-by issues —
