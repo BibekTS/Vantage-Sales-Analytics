@@ -10,6 +10,7 @@
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",
     "test": "node scripts/smoke-test.mjs",
+    "test:spotter-mcp": "node --test lib/spotter-mcp/customize.test.mjs",
     "boot-check": "node scripts/boot-check.mjs",
     "vendor-sdk": "node scripts/vendor-sdk.mjs",
     "register-webhook": "node scripts/register-webhook.mjs",
@@ -21,6 +22,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
   },

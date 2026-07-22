@@ -13,6 +13,7 @@
  *   ✓ the ts-rest relay rejects non-allowlisted paths and tokenless callers (never mints)
  *   ✓ the write-back stub is refused unless TS_ALLOW_DEV_PROXY=true
  *   ✓ the webhook receiver is refused unless TS_ALLOW_WEBHOOK_SINK=true
+ *   ✓ the Spotter MCP relay refuses tokenless callers (it forwards yours, never mints)
  */
 
 import { spawn } from 'node:child_process';
@@ -158,6 +159,15 @@ try {
   {
     const r = await postJson('/api/webhook', { data: { notificationType: 'TEST' } });
     check('webhook sink refused when disabled → 403', r.status === 403, `status ${r.status}`);
+  }
+
+  // 9) The Spotter MCP relay forwards the CALLER'S bearer and never mints — so with no
+  //    Authorization header it must refuse outright, exactly like /api/filter-values.
+  {
+    const r = await postJson('/api/spotter-mcp/chat', { question: 'hi' });
+    check('spotter-mcp chat without a token → 401', r.status === 401, `status ${r.status}`);
+    const h = await fetch(`${BASE}/api/spotter-mcp/health`);
+    check('spotter-mcp health without a token → 401', h.status === 401, `status ${h.status}`);
   }
 } finally {
   server.kill('SIGTERM');

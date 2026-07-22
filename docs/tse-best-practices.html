@@ -1949,12 +1949,12 @@
     auto_create: <span class="k">true</span>,                  <span class="c">// default is already true</span>
     display_name: user.name,
     email: user.email,
-    groups: [                            <span class="c">// array of { identifier } objects</span>
-      { identifier: <span class="s">`tenant_</span><span class="v">${user.tenant_id}</span><span class="s">`</span> },
-      { identifier: <span class="s">`role_</span><span class="v">${abac.role}</span><span class="s">`</span> }
+    groups: [                            <span class="c">// array of { identifier } objects — group_name, NOT display_name</span>
+      { identifier: <span class="s">`tenant_</span><span class="v">${user.tenant_id}</span><span class="s">`</span> },   <span class="c">// ⚠ on /custom these apply at user CREATION only —</span>
+      { identifier: <span class="s">`role_</span><span class="v">${abac.role}</span><span class="s">`</span> }        <span class="c">//   an existing user's groups are NOT updated. See the box below.</span>
     ],
     validity_time_in_sec: <span class="n">300</span>,                <span class="c">// see §06 on TTL choice</span>
-    persist_option: <span class="s">'REPLACE'</span>,                 <span class="c">// REQUIRED field (no default) — REPLACE = authoritative per mint</span>
+    persist_option: <span class="s">'REPLACE'</span>,                 <span class="c">// REQUIRED field (no default) — governs variable_values ONLY, not groups</span>
     variable_values: [
       { name: <span class="s">'region_var'</span>, values: [abac.region] },
       { name: <span class="s">'tenant_id_var'</span>, values: [user.tenant_id] },
@@ -2241,7 +2241,13 @@
           <div class="strip-step"><strong>9 · Return JWT</strong>TS returns the signed token</div>
         </div>
 
-        <p>When you POST to <code>/api/rest/2.0/auth/token/custom</code> with <code>auto_create: true</code>, TS checks if a user with that <code>username</code> exists. If yes — it just mints the token. If no — it creates the user account first (with whatever <code>display_name</code>, <code>email</code>, and <code>groups</code> you provided), then mints in the same call. Note that JIT here can add the user to <em>existing</em> groups; it won't build new group hierarchies for you.</p>
+        <p>When you POST to <code>/api/rest/2.0/auth/token/custom</code> with <code>auto_create: true</code>, TS checks if a user with that <code>username</code> exists. If yes — it just mints the token. If no — it creates the user account first (with whatever <code>display_name</code>, <code>email</code>, and <code>groups</code> you provided), then mints in the same call.</p>
+
+        <p>Two things about <code>groups</code> that are easy to get wrong, and both bite in production rather than in dev:</p>
+        <ul>
+          <li><strong>A group name that doesn't exist gets created</strong>, not rejected. The new group has <code>group_name == display_name</code> and is otherwise a default group — <em>no privileges, no roles, no access</em>. So a typo'd or attacker-influenced <code>role_*</code> value silently mints an empty group instead of failing. Validate role/tenant values against a fixed allowlist before interpolating them, and pre-create groups that need real privileges via <code>/groups/create</code>.</li>
+          <li><strong>For an existing user, <code>groups</code> is ignored entirely on this endpoint.</strong> Membership is written once, at creation, and never again — see the box below.</li>
+        </ul>
 
         <div class="code-block">
           <div class="code-head"><span>POST /api/rest/2.0/auth/token/custom</span><span class="annot">creates the user on first call, reuses them after</span></div>
@@ -2267,7 +2273,42 @@
           <div class="info-icon">✓</div>
           <div>
             <div class="info-title">Why you want auto_create on</div>
-            <div class="info-text">No separate user-provisioning sync between your IdP and TS. A new user just shows up in TS the first time they open an embedded Liveboard — created on demand, assigned to the right group, with the right ABAC stamped. No batch job. No "did the sync run yet" failure mode.</div>
+            <div class="info-text">No separate user-provisioning sync between your IdP and TS. A new user just shows up in TS the first time they open an embedded Liveboard — created on demand, with the right ABAC stamped. No batch job. No "did the sync run yet" failure mode. Note the scope: this buys you <em>user creation</em>. It does not buy you ongoing <em>group</em> sync — that's the next box.</div>
+          </div>
+        </div>
+
+        <div class="info-box warn">
+          <div class="info-icon">!</div>
+          <div>
+            <div class="info-title">auto_create is create-only — group membership silently drifts</div>
+            <div class="info-text">If the username already exists and <code>auto_create: true</code>, ThoughtSpot <strong>ignores</strong> <code>display_name</code>, <code>email</code>, Org, and group entitlements. No error, no warning — the mint returns <code>200</code> and a perfectly valid token. Concretely: a user who first logged in as <code>role_admin</code> and was later demoted keeps <code>role_admin</code> forever, no matter how many times you send <code>role_viewer</code>. This is invisible in dev because test runs usually use a fresh username. To reproduce it, mint twice for the <em>same</em> user with different roles and read membership back via <code>/users/search</code>.</div>
+          </div>
+        </div>
+
+        <div class="info-box info">
+          <div class="info-icon">i</div>
+          <div>
+            <div class="info-title">The three mint endpoints disagree about groups — know which one you're on</div>
+            <div class="info-text">
+              <code>auth/token/full</code> and <code>auth/token/object</code> do a <strong>full replace of the group list on every mint</strong> — send the current set each login and membership stays in sync automatically.
+              <code>auth/token/custom</code> <strong>assigns groups only when the user is created</strong> and is a no-op thereafter.
+              The trap is that <code>custom</code> is also the only endpoint that accepts <code>variable_values</code>, so the ABAC deployments this document recommends are exactly the ones that <em>don't</em> get per-mint group sync. You cannot get both from a single call.
+              Also note <code>persist_option</code> governs <code>variable_values</code> only — it has no bearing on groups, so "REPLACE = authoritative per mint" is true for your RLS variables and false for your group list.
+            </div>
+          </div>
+        </div>
+
+        <div class="info-box good">
+          <div class="info-icon">✓</div>
+          <div>
+            <div class="info-title">Recommended: reconcile groups with a separate call, and finish it before the token reaches the browser</div>
+            <div class="info-text">
+              Treat the token mint as create-only and drive membership explicitly from an admin service account:
+              <code>POST /api/rest/2.0/users/{username}/update</code> with <code>{"operation": "REPLACE", "group_identifiers": [...]}</code>.
+              <code>REPLACE</code> here is a true set-reset — it removes what isn't listed, which is what makes a demotion actually land. <code>ADD</code> only unions and reproduces the same drift.
+              <strong>Ordering:</strong> membership is resolved when the session is established, not when the token is minted, so the requirement is that reconciliation completes <em>before you return the JWT</em>. Provisioning first and minting last is the cleanest shape; if you rely on JIT to create the user you're forced into mint → update → return, since <code>/users/update</code> can't target a user that doesn't exist yet. Either way, never return the token in parallel with the update — a first-time user can otherwise land in the embed before their groups exist.
+              Two caveats: this needs a second credential (an admin bearer, distinct from the <code>secret_key</code>), and the update applies only within that bearer's Org. Budget the extra call inside your TTL (§06).
+            </div>
           </div>
         </div>
       </div>

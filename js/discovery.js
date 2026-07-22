@@ -248,6 +248,22 @@ export async function getCurrentUser(host) {
   } catch (err) { return { ok: false, error: err.message }; }
 }
 
+/**
+ * The bearer for the CURRENT session (getCurrentUserToken, 9.4.0.cl+). It does not mint a new
+ * token — it returns the one behind the session you already have, which is exactly what a
+ * browser-session (cookie) connection needs when something outside the iframe wants a bearer.
+ * With trusted auth we already hold one, so callers should prefer getBearerToken() first.
+ */
+export async function sessionToken(host) {
+  try {
+    const resp = await apiRest(host, '/api/rest/2.0/auth/session/token', { method: 'GET' });
+    if (!resp.ok) return { ok: false, status: resp.status, error: `HTTP ${resp.status}` };
+    const d = await resp.json();
+    if (!d?.token) return { ok: false, error: 'No token in the session-token response' };
+    return { ok: true, token: d.token, expiresAt: d.expiration_time_in_millis || 0, user: d.valid_for_username || '' };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
 /** Make a full, user-owned copy of a liveboard. Returns the new liveboard GUID. (copyobject, 10.3.0.cl+) */
 export async function copyLiveboard(host, sourceId, title, description = '') {
   try {

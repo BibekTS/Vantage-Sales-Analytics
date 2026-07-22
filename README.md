@@ -121,6 +121,7 @@ link asks for an explicit **Connect** click before the app touches it.
 |---|---|---|
 | Search Data | `SearchEmbed` | Worksheet/Model |
 | Spotter AI | `SpotterEmbed` | Worksheet/Model |
+| Spotter Chat (MCP) | Spotter 3 **MCP** session relayed over SSE — your own chat UI, no iframe and no SDK; runs as you (see [docs](docs/spotter-mcp-chat.md)) | — (optional Worksheet/Model) |
 | Liveboard | `LiveboardEmbed` | Liveboard |
 | Custom Liveboard | `LiveboardEmbed` + website-native filter bar | Liveboard |
 | AI Highlights | `LiveboardEmbed` + `HostEvent.AIHighlights` (auto-fired on render) | Liveboard |
@@ -169,6 +170,16 @@ Three integrations ship wired up, each with a full write-up in [`docs/`](docs/):
   expanded, RLS-blocked users skipped). Schedule one with `npm run schedule-liveboard`, trigger it
   with Send now, or rehearse locally with `npm run simulate-webhook -- --multipart`. Full walkthrough
   in [docs/webhook-inbox-demo.md](docs/webhook-inbox-demo.md).
+- **Spotter Chat (MCP)** — a rail section (under *Search & AI*) that is **your own chat UI** over
+  ThoughtSpot's **Spotter 3 MCP server**: no Visual Embed SDK, no LLM in the loop. The server relays
+  `create_analysis_session → send_session_message → get_session_updates` and streams the result back
+  as SSE, while a **text-customization layer** rewrites vendor terms in the prose ("Spotter" →
+  "DataAnalyzer") without ever touching URLs or the answer `iframe_url`. **Nothing to configure** —
+  the relay forwards the credential from your current connection (trusted auth, or the token behind
+  your browser session via `auth/session/token`) and never mints, so Spotter runs as the real end
+  user and their RLS applies. Code in [lib/spotter-mcp/](lib/spotter-mcp/) +
+  [js/spotter-mcp.js](js/spotter-mcp.js); the swappable label map is
+  [lib/spotter-mcp/labels.json](lib/spotter-mcp/labels.json).
 
 ---
 
