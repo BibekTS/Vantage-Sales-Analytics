@@ -13,6 +13,8 @@
  *     server is pre-existing and allowed)
  *   ✓ XSS probe (BACKLOG S1): an <img onerror> payload in a #s=-hash group name renders as
  *     inert text in the auth chips and the Event Log — it must never execute
+ *   ✓ URL-action scheme probe (BACKLOG S13): a `javascript:` urlTemplate from a #s= hash must be
+ *     refused at window.open, while a plain https template still opens with placeholders resolved
  *
  * Chrome resolution: $CHROME_PATH, then the standard macOS / Linux install locations
  * (GitHub's ubuntu runners ship google-chrome). Requires devDependency puppeteer-core.
@@ -286,6 +288,80 @@ async function runAnswerPreconfirmProbe(browser) {
   }
 }
 
+// URL-action scheme probe (BACKLOG S13): a custom action's `urlTemplate` arrives from the
+// attacker-controllable #s= share hash and state.js sanitizes it by LENGTH ONLY — so a
+// `javascript:` (or data:/vbscript:/blob:) template would reach window.open() and execute
+// (`noopener` severs window.opener but does not stop script). The guard is app.js's `safeNavUrl()`
+// applied to the FINAL substituted url inside window.__onCustomAction — that sink is the trust
+// boundary (the editor-form check is defence in depth and is bypassed entirely by a shared link).
+//
+// Host-free probe: the hash carries only {customActions:[…]} so nothing contacts ThoughtSpot.
+// window.open is stubbed before any app code runs, recording every call into window.__opened.
+//   Negative: dispatch the `javascript:` action → nothing hostile opened, window.__pwned unset.
+//   Positive control (mandatory): dispatch a plain https action with a {{placeholder}} → it MUST
+//     open the substituted, encodeURIComponent'd URL. Without it, a broken registry rebuild or a
+//     no-op dispatcher would make the negative assertion vacuously true.
+async function runUrlActionSchemeProbe(browser) {
+  const EVIL = 'javascript:window.__pwned=1';
+  const GOOD = 'https://example.invalid/x?id={{Customer ID}}';
+  const actions = [
+    { id: 'evil', label: 'Evil', pos: 'PRIMARY', target: 'VISUALIZATION', type: 'url', urlTemplate: EVIL },
+    { id: 'good', label: 'Good', pos: 'PRIMARY', target: 'VISUALIZATION', type: 'url', urlTemplate: GOOD },
+  ];
+  const hash = Buffer.from(JSON.stringify({ customActions: actions }), 'utf8').toString('base64url');
+  const probe = await browser.newPage();
+  const probeErrors = [];
+  probe.on('pageerror', (e) => probeErrors.push('PAGEERROR: ' + e.message));
+  try {
+    // Stub window.open BEFORE the app's modules run, so no real popup/navigation can occur.
+    await probe.evaluateOnNewDocument(() => {
+      window.__opened = [];
+      window.open = (u) => { window.__opened.push(String(u)); return null; };
+    });
+    await probe.goto(`${BASE}/#s=${hash}`, { waitUntil: 'networkidle2', timeout: 30_000 });
+    // The dispatcher is installed as the module graph executes — retry until it exists.
+    const dispatcherReady = await probe
+      .waitForFunction(() => typeof window.__onCustomAction === 'function', { polling: 300, timeout: 20_000 })
+      .then(() => true, () => false);
+    // Bail out cleanly if the dispatcher never appeared: firing into a missing
+    // `window.__onCustomAction` throws, the exception escapes this probe, and the outer finally
+    // tears the browser down before the gate can print `BOOT CHECK: FAIL`. Returning the result
+    // object with the remaining assertions false makes that a reported failure, not a stack trace.
+    if (!dispatcherReady) {
+      return { dispatcherReady: false, pwned: false, hostileOpened: [], goodOpened: false, opened: [], probeErrors };
+    }
+    const fire = (id) => probe.evaluate(async (actionId) => {
+      await window.__onCustomAction({
+        id: actionId,
+        data: { clickedPoint: { selectedAttributes: [{ column: { name: 'Customer ID' }, value: '42' }] } },
+      });
+    }, id);
+    await fire('evil');
+    await sleep(400); // let any async work the dispatcher kicked off settle before we sample
+    // BELT AND BRACES, NOT A REGRESSION DETECTOR: `pwned` is vacuous by construction — window.open
+    // is stubbed with a recorder above, so no navigation can ever occur and `__pwned` can never be
+    // set whether or not the guard exists. It is kept only to catch some other, unforeseen path
+    // that manages to execute the payload. The load-bearing, mutation-proven assertion is
+    // `hostileOpened.length === 0` below: no non-http(s) URL reached window.open.
+    const pwned = await probe.evaluate(() => window.__pwned !== undefined);
+    const hostileOpened = await probe.evaluate(
+      () => (window.__opened || []).filter((u) => !/^https?:\/\//i.test(u)));
+    await fire('good');
+    await sleep(200);
+    const opened = await probe.evaluate(() => window.__opened || []);
+    return {
+      dispatcherReady,
+      pwned,
+      hostileOpened,
+      goodOpened: opened.includes('https://example.invalid/x?id=42'),
+      opened,
+      probeErrors,
+    };
+  } finally {
+    await probe.close();
+  }
+}
+
 let ok = false;
 let browser;
 try {
@@ -356,9 +432,23 @@ try {
   console.log(`Answer pre-confirm probe (S3) — no discovery POST to unconfirmed host: ${s3pre.noDiscoveryContact}`);
   s3pre.discoveryHits.forEach((u) => console.log('  - discovery POST at unconfirmed host:', u));
 
+  const urlAct = await runUrlActionSchemeProbe(browser);
+  console.log(`URL-action scheme probe (S13) — dispatcher installed: ${urlAct.dispatcherReady}`);
+  // Belt-and-braces only — vacuous by construction (window.open is stubbed in the probe, so the
+  // payload can never navigate). NOT a regression detector; the load-bearing assertion is the
+  // "no non-http(s) URL reached window.open" line below, which is mutation-proven.
+  console.log(`URL-action scheme probe (S13) — javascript: template did NOT execute: ${!urlAct.pwned}`);
+  console.log(`URL-action scheme probe (S13) — no non-http(s) URL reached window.open: ${urlAct.hostileOpened.length === 0}`);
+  urlAct.hostileOpened.forEach((u) => console.log('  - hostile window.open:', u));
+  console.log(`URL-action scheme probe (S13) — plain https template still opens substituted URL: ${urlAct.goodOpened}`);
+  urlAct.opened.forEach((u) => console.log('  - window.open:', u));
+  urlAct.probeErrors.forEach((e) => console.log('  - probe page:', e));
+  const urlActOk = urlAct.dispatcherReady && !urlAct.pwned && urlAct.hostileOpened.length === 0
+    && urlAct.goodOpened && urlAct.probeErrors.length === 0;
+
   ok = resp.status() === 200 && shellMounted && errors.length === 0 && badResponses.length === 0
     && !xss.executed && xss.inChip && xss.inLog && hostOk && answerOk
-    && s3pre.confirmShown && s3pre.noDiscoveryContact;
+    && s3pre.confirmShown && s3pre.noDiscoveryContact && urlActOk;
   console.log(ok ? '\nBOOT CHECK: PASS' : '\nBOOT CHECK: FAIL');
 } finally {
   try { await browser?.close(); } catch { /* already gone */ }
