@@ -32,3 +32,19 @@ This log is the raw material for org retrospectives (BACKLOG M2).
   pre-filing). Friction: the S3 drain committed + merged (#17) mid-hunt under the shared checkout, so
   the CEO re-read git state before filing and branched the records PR off the *post-#17* main — the
   worktree discipline held. Filed S13–S17. No skill change needed.
+- 2026-07-22 (S13, P1 security drain): the FIX was sound first time — the security lens could not
+  break it — but the cycle's *process* failed twice, both traceable to playbook instructions. (1) The
+  implementer was told to leave its work UNCOMMITTED for review; a concurrent actor in the shared
+  working directory then swept the uncommitted P1 security fix into its own unrelated feature commit
+  on its own branch, leaving the S13 branch empty and requiring a full re-apply + re-verify. Filed
+  **M9**: the implementer must commit to its branch. (2) "Review Board ∥ QA" put reviewers on a live
+  tree that QA was concurrently MUTATING for its mutation test — the regression reviewer read the sink
+  as guarded at 09:58 and unguarded at 10:04 and rightly refused to trust either. Filed **M10**:
+  reviewers get an immutable commit/patch, QA mutates a scratch copy. Both are direct consequences of
+  how the skill is written, not agent error. What worked: parallel lenses earned their keep — security
+  cleared the guard while correctness AND regression independently caught the same editor-save false
+  positive (`https://{{Domain}}` → rejected) that the gates were blind to, and QA's insistence on
+  re-doing the mutation test itself surfaced both that the probe's `__pwned` assertion is vacuous and
+  that the repo state didn't match the brief. Delegated research also caught that the org-memory line
+  cites were ~1200 lines stale. Lesson: gates prove a fix works; only adversarial review proves it
+  doesn't break something else.

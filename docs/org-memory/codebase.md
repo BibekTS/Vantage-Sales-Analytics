@@ -95,6 +95,49 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   A `#s=`-supplied `url` custom action with `urlTemplate:"javascript:…"` (no `{{}}` placeholder, so
   `.replace()` is a no-op) reaches `window.open(url,'_blank','noopener')` (app.js:3761-3763) and the
   `javascript:` scheme executes. `noopener` severs `window.opener` but does not stop script execution.
+- 2026-07-22 (S13, FIXED — supersedes the line cites in the bullet above): the sink had drifted to
+  `js/app.js` `window.__onCustomAction` and the `str()`-only sanitize to `state.js:264` — both cited
+  numbers in the 2026-07-13 bullet were stale by ~1200 lines. **Line numbers in this file age fast;
+  re-verify every cite before acting on it.** The hole is now closed at the SINK via `safeNavUrl()`
+  (`new URL(String(u), location.href)` + `http:`/`https:` allowlist, returns `''` if refused), applied
+  to the **post-substitution** URL. That ordering is load-bearing: guarding `reg.urlTemplate` instead
+  would re-open the smuggle `java{{X}}script:alert(1)` (absent column → `''` → `javascript:`).
+  `state.js` was deliberately NOT changed — `urlTemplate` is still length-only sanitized by design,
+  which is what kept the PR off a guard-protected path.
+- 2026-07-22 (S13, security lens, verified refused): mixed case, leading spaces/NUL, embedded
+  tab/CR/LF (`java\tscript:`), `data:`/`vbscript:`/`blob:`/`view-source:`, and host-position
+  substitution (`https://evil.com%2F.ok.com/` → throws → fail-closed). `window.open` exists exactly
+  ONCE in the repo (the guarded URL-action sink); the `writeback` branch POSTs to a config-derived
+  `${API_BASE}/api/writeback` and the `drill` branch only feeds a GUID to `enterDrill`, so neither
+  navigates. `reg.webhook` is sanitized + registered but **never read** — dead field.
+- 2026-07-22 (S13): `safeNavUrl` resolves relative templates against `location.href`, so scheme-less
+  (`crm.example.com/x`), protocol-relative (`//host/x`), relative (`/lookup?id=`) and `#anchor`
+  templates keep working **exactly as before** (the browser resolved them identically pre-fix). The
+  guard is scheme-only, never a host allowlist. Consequence: `mailto:`/`tel:`/`slack://` actions are
+  now refused (fail-closed, toast + log) — filed as **S18**. Returning the normalized `u.href` is
+  destination-preserving for http(s) (default-port strip, IDN punycode, case, dot-segment collapse;
+  query/fragment byte-preserved) and cannot double-encode, because `encodeURIComponent` substitution
+  runs first.
+- 2026-07-22 (S13, review): the editor-save check must validate the template's **literal leading
+  scheme**, NOT the placeholder-stripped string. Stripping `https://{{Domain}}` yields `https://`,
+  which `new URL` THROWS on → legitimate templates falsely rejected (same for `…/`, `…?q=1`, `…#f`);
+  and `https://{{Host}}/x` strips to `https:///x` which parses as host `x`, i.e. it would validate a
+  different URL than the one opened. The editor check is a nicety — shared links bypass the form
+  entirely, so the SINK is the only trust boundary.
+- 2026-07-22 (S13, tested — a plausible "fix" that is WRONG): the save-time scheme regex
+  `[a-z][a-z0-9+.-]*` must KEEP the dot in its char class. It mirrors the WHATWG URL scheme grammar
+  exactly, which is why it agrees with `safeNavUrl` on every input. Removing the dot to "stop
+  misreading `crm.example.com:8080/x` as a scheme" is a false economy: `new URL` parses that scheme
+  the same way (dots and all) and REFUSES it, so the form would accept a template the sink then
+  blocks on every click — accept-then-block, strictly worse than rejecting at entry. `localhost:3000/x`
+  is refused for the same reason and is unfixable lexically (`localhost:3000` and `tel:123` are the
+  same `word:digits` shape). The remedy is user-facing: write `http://crm.example.com:8080/…`.
+  Keep the two checks in lockstep — divergence is what creates accept-then-block.
+- 2026-07-22 (S13, security lens, AUDITED CLEAN, low impact): `customActionRegistry[a.id]` uses
+  link-derived ids that `state.js` does not proto-guard. `__proto__` re-points the registry's own
+  prototype (not `Object.prototype`) and `toString`/`constructor` make `reg` truthy — but no
+  dispatcher branch fires on either. No exploit today; would matter if the registry gained a
+  `for…in` or a default-bearing lookup.
 - 2026-07-13 (discover, AUDITED CLEAN, security lens): secrets/tokens are never serialized or
   persisted — the discovery bearer is in-memory only (discovery.js:9-12), the secret_key never
   reaches the browser, the token inspector redacts + uses `textContent`. Runtime filters are NOT
@@ -108,6 +151,23 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
   safe to run concurrently on one machine (parallel worktrees, or a reviewer running the suite
   alongside QA, collide with `EADDRINUSE` and produce phantom reds). Only one agent runs them at
   a time; M8 tracks making them parallel-safe.
+- 2026-07-22 (S13): **a boot-check probe that stubs `window.open` cannot observe `javascript:`
+  execution** — the stub prevents the navigation that would execute it, so a `window.__pwned`-style
+  assertion reads `true` even with the guard fully removed (empirically confirmed during the mutation
+  test). Load-bearing assertions must be of the form "no hostile value REACHED the sink". Every probe
+  needs a positive control (a legit input that must still reach the sink) or the negative assertion
+  can pass vacuously when the dispatcher breaks.
+- 2026-07-22 (S13): a probe that computes a readiness flag must GATE on it — the S13 probe originally
+  called `fire()` unconditionally, so a missing `window.__onCustomAction` threw, escaped the probe,
+  closed the browser, and killed the run **without ever printing `BOOT CHECK: FAIL`** (non-zero exit,
+  but nothing for a log-grepping consumer to see).
+- 2026-07-22 (S13): probes share ONE default browser context (localStorage is common to all) and run
+  in declaration order against a hard 120s whole-run watchdog that is not scaled per probe. A probe
+  that writes state must be ordered after any probe that asserts on persistence. Filed as **S20**.
+- 2026-07-22 (S13): `window.__onCustomAction` is a plain `window` global, dispatchable directly from a
+  probe with a synthetic `{id, data:{clickedPoint:{selectedAttributes:[{column:{name},value}]}}}`
+  payload — a host-free `#s=` link plus a direct call exercises registry-rebuild → `extractRow` →
+  substitution with zero ThoughtSpot contact. Reusable pattern for custom-action probes.
 
 ## Webhooks (S12)
 

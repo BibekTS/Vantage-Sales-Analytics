@@ -210,6 +210,18 @@ let answerList;         // [{id,name}] | null (failed) | undefined (not loaded) 
 let logCount = 0;
 let bottomTab = 'log';
 const customActionRegistry = {}; // id -> { type, label, webhook, urlTemplate, drillLiveboardId }
+// A URL action's template can arrive from a shared #s= link, where state.js sanitizes it by length
+// only — so a `javascript:` / `data:` / `vbscript:` / `blob:` template would reach window.open() and
+// execute (`noopener` severs the opener, it does not stop script). Resolve against the current
+// document so relative / scheme-less templates keep working, and accept ONLY plain http(s).
+// Same idiom as the ThoughtSpot-supplied link guard in spotter-mcp.js. Returns '' if refused.
+function safeNavUrl(url) {
+  try {
+    const u = new URL(String(url), location.href);
+    if (u.protocol === 'https:' || u.protocol === 'http:') return u.href;
+  } catch (_) { /* unparseable → refuse */ }
+  return '';
+}
 // Id of the app-injected "Download invoice pdf" viz-menu action (see buildEmbedCustomActions +
 // handleInvoicePdf). Override with window.TS_PDF_ACTION_ID to match a TS-side action id instead.
 const PDF_ACTION_ID = window.TS_PDF_ACTION_ID || 'download-invoice-pdf';
@@ -3204,7 +3216,7 @@ function sectionCustomActions(s) {
   const urlInp = el('input', 'inp'); urlInp.type = 'text';
   urlInp.placeholder = 'https://crm.example.com/lookup?id={{Customer ID}}';
   urlF.appendChild(urlInp);
-  urlF.appendChild(el('div', 'fld-hint', 'Opened when the action fires. Use {{Column Name}} placeholders to inject values from the clicked row.'));
+  urlF.appendChild(el('div', 'fld-hint', 'Opened when the action fires. Use {{Column Name}} placeholders to inject values from the clicked row. Must be a plain http(s) URL.'));
   // Drill target — only meaningful for the "drill" type. The detail liveboard re-renders in
   // place carrying the parent filter bar + the clicked point's attributes (Q4).
   const drillF = el('div', 'fld'); drillF.appendChild(el('label', 'fld-lbl', 'Drill-down liveboard GUID'));
@@ -3237,6 +3249,14 @@ function sectionCustomActions(s) {
     const type = typeSel.value;
     const urlTemplate = type === 'url' ? urlInp.value.trim() : '';
     if (type === 'url' && !urlTemplate) { toast('Enter a URL template for a URL action.'); return; }
+    // Defence in depth — reject a hostile scheme at entry. Only the template's own literal scheme
+    // is checked: a placeholder may legitimately supply the authority (`https://{{Domain}}`), and a
+    // scheme-less/relative template is resolved at click time. The click handler re-checks the
+    // fully substituted URL — that guard is the real trust boundary; shared links bypass this form.
+    const litScheme = /^\s*([a-z][a-z0-9+.-]*):/i.exec(urlTemplate);
+    if (type === 'url' && litScheme && !/^https?$/i.test(litScheme[1])) {
+      toast('URL template must be a plain http(s) URL.'); return;
+    }
     const drillLiveboardId = type === 'drill' ? drillInp.value.trim() : '';
     if (type === 'drill' && !drillLiveboardId) { toast('Enter the drill-down liveboard GUID.'); return; }
     customActionRegistry[id] = { type, label: lbl, urlTemplate, drillLiveboardId };
@@ -5002,7 +5022,14 @@ window.__onCustomAction = async (payload) => {
   }
   if (reg.type === 'url' && reg.urlTemplate) {
     const url = reg.urlTemplate.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, c) => encodeURIComponent(row[c.trim()] ?? ''));
-    window.open(url, '_blank', 'noopener');
+    // Scheme guard on the FINAL url (after placeholder substitution) — this is the trust boundary.
+    const safe = safeNavUrl(url);
+    if (!safe) {
+      logEvent('CustomAction', `⚠ "${reg.label}" blocked — a URL action must resolve to a plain http(s) URL.`);
+      toast('Blocked: this URL action does not resolve to an http(s) URL.');
+      return;
+    }
+    window.open(safe, '_blank', 'noopener');
   } else if (reg.type === 'writeback') {
     try { const res = await fetch(`${API_BASE}/api/writeback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: id, row }) }); recordApi({ scope: 'playground', method: 'POST', path: '/api/writeback', status: res.status }); const d = await res.json(); logEvent('Writeback', res.ok ? `✓ ${d.ticketId}` : `✗ ${d.error}`); }
     catch (e) { logEvent('Writeback', `✗ ${e.message} — is the Node server running?`); }
