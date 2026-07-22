@@ -391,6 +391,7 @@ async function probeTokenServer() {
     tokenServerAvailable = false; // network error / connection refused / wrong origin
   }
   applyTrustedAuthAvailability();
+  applyLocalOnlyAvailability(); // same probe gates the relay-backed sections (Spotter Chat)
 }
 
 function applyTrustedAuthAvailability() {
@@ -553,10 +554,50 @@ function renderEmbedList() {
         li.setAttribute('aria-label', `${e.name} — ${blurb}`);
         attachRailTip(li, e.name, e.cls, blurb);
       }
-      li.addEventListener('click', () => setActive(e.id));
+      li.addEventListener('click', () => {
+        // Sections that need the Node relay are greyed out when it isn't there.
+        if (li.classList.contains('unavailable')) { toast(LOCAL_ONLY_NOTE, 'info'); return; }
+        setActive(e.id);
+      });
       ul.appendChild(li);
     });
   });
+  applyLocalOnlyAvailability();
+}
+
+// ── Local-server-only sections ────────────────────────────────────────────────
+// Spotter Chat (MCP) is not a pure browser embed: every turn goes through the Node
+// relay (/api/spotter-mcp/*), which forwards the caller's own bearer to the MCP proxy.
+// Served from a static host (Vercel, Live Server) those routes don't exist, so Ask
+// dead-ends on an unexplained HTTP 404. Grey the rail item out on exactly the signal
+// that already gates Trusted Auth — tokenServerAvailable, the /api/auth/config probe.
+const LOCAL_ONLY_SECTIONS = new Set(['spotter-chat']);
+const LOCAL_ONLY_NOTE = 'Spotter Chat (MCP) needs the local Node relay — run `npm start` (port 3000).';
+// Where a greyed-out section sends you instead: the nearest equivalent that works in a
+// plain browser. Keep this in sync with LOCAL_ONLY_SECTIONS.
+const LOCAL_ONLY_FALLBACK = { 'spotter-chat': 'spotter' };
+
+function applyLocalOnlyAvailability() {
+  document.querySelectorAll('.embed-item').forEach(li => {
+    const id = li.dataset.id;
+    if (!LOCAL_ONLY_SECTIONS.has(id)) return;
+    const off = !tokenServerAvailable;
+    li.classList.toggle('unavailable', off);
+    li.setAttribute('aria-disabled', String(off));
+    const cls = li.querySelector('.ei-cls');
+    if (cls) cls.textContent = off ? 'local server only' : META[id].cls;
+    // attachRailTip reads this at hover time, so the reason replaces the blurb live.
+    if (off) li.dataset.tipNote = LOCAL_ONLY_NOTE;
+    else delete li.dataset.tipNote;
+  });
+
+  // A shared link or restored state may have left us ON a section we can't run.
+  const cur = getState().section;
+  if (!tokenServerAvailable && LOCAL_ONLY_SECTIONS.has(cur)) {
+    logEvent('MCP', 'Spotter Chat unavailable — no local relay. Switched to Spotter AI.');
+    toast(LOCAL_ONLY_NOTE, 'info');
+    setActive(LOCAL_ONLY_FALLBACK[cur] || 'search');
+  }
 }
 
 // Instant, styled hover tooltip for the rail. A body-anchored element is used
@@ -571,7 +612,9 @@ function attachRailTip(item, name, cls, blurb) {
     }
     railTipEl.innerHTML =
       `<div class="rail-tip-title">${name} <span class="rail-tip-cls">${cls}</span></div>` +
-      `<div class="rail-tip-body">${blurb}</div>`;
+      // dataset.tipNote lets a section replace its blurb at hover time — used to say
+      // WHY a greyed-out item is greyed out instead of describing what it would do.
+      `<div class="rail-tip-body">${item.dataset.tipNote || blurb}</div>`;
     const r = item.getBoundingClientRect();
     railTipEl.style.left = `${r.right + 10}px`;
     railTipEl.style.top = `${r.top + r.height / 2}px`;

@@ -121,7 +121,7 @@ link asks for an explicit **Connect** click before the app touches it.
 |---|---|---|
 | Search Data | `SearchEmbed` | Worksheet/Model |
 | Spotter AI | `SpotterEmbed` | Worksheet/Model |
-| Spotter Chat (MCP) | Spotter 3 **MCP** session relayed over SSE — your own chat UI, no iframe and no SDK; runs as you (see [docs](docs/spotter-mcp-chat.md)) | — (optional Worksheet/Model) |
+| Spotter Chat (MCP) | Spotter 3 **MCP** session relayed over SSE — your own chat UI, no iframe and no SDK; runs as you (see [docs](docs/spotter-mcp-chat.md)) | **the local server** — greyed out on a static host; optional Worksheet/Model |
 | Liveboard | `LiveboardEmbed` | Liveboard |
 | Custom Liveboard | `LiveboardEmbed` + website-native filter bar | Liveboard |
 | AI Highlights | `LiveboardEmbed` + `HostEvent.AIHighlights` (auto-fired on render) | Liveboard |
@@ -177,7 +177,10 @@ Three integrations ship wired up, each with a full write-up in [`docs/`](docs/):
   "DataAnalyzer") without ever touching URLs or the answer `iframe_url`. **Nothing to configure** —
   the relay forwards the credential from your current connection (trusted auth, or the token behind
   your browser session via `auth/session/token`) and never mints, so Spotter runs as the real end
-  user and their RLS applies. Code in [lib/spotter-mcp/](lib/spotter-mcp/) +
+  user and their RLS applies. **Runs locally only** — every turn goes through the Node relay
+  (`/api/spotter-mcp/*`), so on a static host (Vercel, Live Server) those routes don't exist and the
+  rail item is **greyed out** with the reason on hover, exactly like *Auth: Trusted token*. Run
+  `npm start` to use it. Code in [lib/spotter-mcp/](lib/spotter-mcp/) +
   [js/spotter-mcp.js](js/spotter-mcp.js); the swappable label map is
   [lib/spotter-mcp/labels.json](lib/spotter-mcp/labels.json).
 
@@ -233,6 +236,7 @@ from a pinned unpkg URL by default; run `npm run vendor-sdk` to self-host it fro
 | JIT / group minting returns **403** | Fail-closed by design. Set `TS_ALLOW_JIT=true` and/or `TS_GROUP_ALLOWLIST=…` in `.env`. |
 | Edited `.env` but nothing changed | `.env` is read at boot — restart `npm start`. |
 | `file://` doesn't work | Serve it — `npm start` (or VS Code Live Server → `http://localhost:5500`). |
+| **Spotter Chat (MCP)** greyed out / *Trusted token* greyed out | No Node server behind this origin (static host, or Live Server on `:5500`). Both need `/api/*` — run `npm start` on `http://localhost:3000`. Browser-session auth and every iframe embed still work without it. |
 
 ---
 
