@@ -201,7 +201,11 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
   missed something, a rule was ambiguous, effort was duplicated, a skill or agent instruction was
   wrong or unclear — append an M-row (goal 3: the org improves itself). The org's own machinery
   (`.claude/skills/*`, `.claude/agents/*`, `docs/*-playbook.md`, `BACKLOG.md`) is deliberately NOT
-  guard-protected: improvements to it ship through the same branch-and-PR flow as app code.
+  guard-protected: improvements to it ship through the same branch-and-PR flow as app code — which
+  means they go through Review Board and QA like anything else. "Not guard-protected" is never a
+  licence to slip such an edit into an already-verified PR: apart from `BACKLOG.md` and
+  `docs/org-memory/*`, those paths are **not** records-only, so a commit touching them after QA
+  invalidates review and QA per step 4. File the M-row; ship the machinery fix in its own cycle.
 
 ## 7. Operations — ship
 - Commit (message ends with the `Co-Authored-By: Claude Fable 5` trailer), push, and open a PR with
@@ -218,10 +222,17 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
 - Before opening the PR, prove it mechanically and state the result in the evidence section:
   ```bash
   git merge-base --is-ancestor <qa-verified-sha> HEAD   # exit 0 = the verified commit is on the head
-  git log --oneline <qa-verified-sha>..HEAD             # must be empty or records-only (step 4)
+  git log --name-only <qa-verified-sha>..HEAD           # must be empty or records-only (step 4)
   ```
   A non-zero exit means the verified artifact was rewritten away — stop, re-run QA against the real
   head, and cite that SHA instead.
+- **Judge the second command on PATHS, never on subject lines.** Step 4's predicate is a file-list
+  question ("is this commit's file list a subset of those two entries?"), so read the file list:
+  `--name-only` (or `--stat`) prints it; `--oneline` prints only the subject the committing agent
+  chose, which a commit that also carries a stray `package.json` can make look records-only.
+  **Acceptance rule: every path printed must be `BACKLOG.md` or under `docs/org-memory/`.** If any
+  other path appears — whatever the subject line claims — the head is neither reviewed nor verified:
+  re-run the Review Board and QA against the new SHA, and only then open the PR citing that SHA.
 - Wait for the required checks: `smoke`, `esm-parse`, `guard` (plus advisory `boot`).
 - **Auto-merge if ALL hold:** every required check green ∧ code review found no confirmed
   correctness bug ∧ `guard` passed WITHOUT the `human-approved` label. Merge with
@@ -236,9 +247,12 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
 - A concise summary: what shipped, the evidence, any M-items filed, and the next open item the CEO
   would pick.
 - **Micro-retro (mandatory):** one line answering "did any skill, agent definition, or playbook
-  instruction mislead, block, or slow this cycle?" If yes: fix it in this same PR when trivial
-  (those files are not guard-protected), otherwise file an M-row. "No friction" is a valid answer;
-  silence is not.
+  instruction mislead, block, or slow this cycle?" If yes: fix it in this same PR **only if the PR
+  has not yet been QA'd**. Once QA has run, a `.claude/*` or `docs/*-playbook.md` edit is **not**
+  records-only, so per step 4 it invalidates review AND QA — and no CI check can catch a bad `.md`
+  edit, so nothing else would stop an unreviewed change to the org's own gate definitions. After QA,
+  **file an M-row instead**; do not reason from "those files are not guard-protected". "No friction"
+  is a valid answer; silence is not.
 
 ## Discovery mode (`/ceo-improve-cycle discover` and `discover fix`)
 
