@@ -25,8 +25,16 @@ Given an implementation plan:
 5. **Persist memory**: if the build established a durable fact (a gotcha, a helper's sharp edge,
    a verified supersession), append it to `docs/org-memory/codebase.md` on your branch — dated,
    with file:line — so it merges with the work that produced it.
-6. **Report**: what changed (files + why), any plan deviations, gate output verbatim, and anything
-   you noticed that belongs in the backlog (don't fix drive-by issues — report them).
+6. **Commit before you hand back.** Everything you changed — code plus the `codebase.md` append —
+   is committed to your branch once the gates are green. Never hand back an uncommitted tree "so
+   reviewers can see it": a shared working tree is unowned, and a concurrent actor's `git commit`
+   has already swept an uncommitted P1 security fix into someone else's feature commit (S13,
+   2026-07-22). The CEO can amend or reword before the PR; it cannot recover a swept diff. Don't
+   push and don't open the PR — that's Operations.
+7. **Report**: the **commit SHA** first (the Review Board and QA both work from that commit, not
+   from the working tree), then what changed (files + why), any plan deviations, gate output
+   verbatim, and anything you noticed that belongs in the backlog (don't fix drive-by issues —
+   report them).
 
 Commit messages end with: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Never add the
 `human-approved` label, never merge, never use `--admin`.

@@ -99,15 +99,21 @@ docs/org-memory/codebase.md before any work") and ends with a "Memory-worthy" ha
                    Verification plan. It designs; it does not build.
   • implementer  — tools: (all — the ONLY writer).  Executes an approved plan ON A BRANCH (never
                    main), matches codebase style, runs the gates before handing back, records any
-                   deviation from the plan. Never adds the human-approved label, never merges.
+                   deviation from the plan. COMMITS its work to its branch before handing back —
+                   never leaves the fix only in the shared working tree — and returns the commit
+                   SHA. Never adds the human-approved label, never merges.
   • reviewer     — tools: Read, Glob, Grep, Bash.  ADVERSARIAL. "Assume the diff is wrong and hunt
                    the evidence." Spawned one-per-LENS (correctness / security / regression /
                    performance). Every finding needs a concrete FAILURE SCENARIO — one without is
                    an opinion, drop it. Grades findings CONFIRMED / PLAUSIBLE. Does NOT run the
-                   port-binding gates (QA owns those).
+                   port-binding gates (QA owns those). Reviews an IMMUTABLE artifact — the
+                   implementer's commit SHA (`git show <SHA>:<path>`) or a saved patch — never the
+                   live working tree.
   • qa-verifier  — tools: Bash, Read, Glob, Grep.  The GATE. Runs the full bar in order
                    (lint/typecheck → tests → build/smoke → a feature-specific check from the
-                   item's acceptance criteria) and reports output VERBATIM. Verifies; never fixes,
+                   item's acceptance criteria) and reports output VERBATIM. Runs the bar in a
+                   disposable worktree checked out at that SHA, so a mutation test (revert the fix,
+                   prove the probe fails) never touches the shared checkout. Verifies; never fixes,
                    never weakens a test. If a gate is red, report precisely and stop.
   • bug-hunter   — tools: Read, Glob, Grep, Bash.  DISCOVERY. Hunts NEW, unfiled bugs in an
                    assigned hunting-ground × lens (correctness / security / regression /
@@ -142,7 +148,8 @@ when the items' product files are disjoint), `/improve-cycle discover` (hunt & F
       create branch `improve/<ID>-<slug>`, mark the row in-progress ON THE BRANCH → implementer
       builds. Independent items → worktree-isolated implementers, one each.
    4. REVIEW ∥ QA — launch the Review Board (reviewer per lens, each told to REFUTE) AND
-      qa-verifier together in one message. Also run /code-review and /security-review if available.
+      qa-verifier together in one message — both given the implementer's commit SHA, not the
+      working tree. Also run /code-review and /security-review if available.
       Fix every CONFIRMED finding (re-dispatch implementer), then RE-RUN QA — a diff that changed
       after verification is unverified.
    5. QA BAR — lint/typecheck → tests → build/smoke → feature-specific check. Do not PR on red.

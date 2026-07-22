@@ -80,20 +80,54 @@ Records step (step 6).
   parallel/independent items use **worktree isolation**, one implementer per item. The
   implementer follows every rule in `CLAUDE.md` (state.js sanitize discipline, `textContent`
   not `innerHTML`, `embed.destroy()` before re-render, numeric/UTC date epochs, `pushRuntimeFilters`).
+- **The implementer commits its work to its branch before handing back** — never "leave it
+  uncommitted so the reviewers can see it". A dirty shared working tree is unowned: in the S13
+  cycle a concurrent actor's `git commit` swept an uncommitted P1 security fix into ITS unrelated
+  feature commit on another branch, leaving the fix's own branch empty (2026-07-22). The handback
+  must carry the **commit SHA** — everything downstream reads that SHA, not the tree. If an
+  implementer ever returns a dirty tree anyway, the CEO commits it on the branch immediately,
+  before dispatching anyone else. Amending or rewording before the PR is always available;
+  recovering a swept diff is not.
 
 ## 4. Review Board ∥ QA — audit and verify in parallel
-Once the diff is in hand, launch the Review Board and QA **together, in one message** — they are
-independent reads of the same diff:
+Parallel reads are only safe against an **immutable artifact**. Hand every agent in this phase the
+implementer's **commit SHA** from step 3 — never "review the working tree". The checkout mutates
+underneath them: QA's mutation test alone flips a guard off and back on, and in the S13 cycle a
+reviewer read `js/app.js` as guarded at 09:58 and unguarded at 10:04 and correctly refused to trust
+either read. With the SHA named, launch the Review Board and QA **together, in one message** — they
+are independent reads of the same commit:
 - **Review Board:** spawn **`reviewer`** agents, one per applicable lens (correctness always;
   security when the diff touches auth, serialization, the server, or DOM sinks; regression when it
-  touches existing behavior) — all in the same message, each prompted to REFUTE the diff. Also run
-  `/code-review` (medium or higher). For security-adjacent diffs, add `/security-review`.
-- **QA (the gate):** delegate to the **`qa-verifier`** agent, capturing output for the PR body.
+  touches existing behavior) — all in the same message, each prompted to REFUTE the diff **at that
+  SHA** (they read it with `git diff <base>...<SHA>` and `git show <SHA>:<path>`; they never check
+  anything out). Also run `/code-review` (medium or higher). For security-adjacent diffs, add
+  `/security-review`.
+- **QA (the gate):** delegate to the **`qa-verifier`** agent **with the SHA**, capturing output for
+  the PR body. QA runs the bar — and any mutation test — in a disposable worktree at that SHA
+  (recipe in step 5), never in the shared checkout. That isolates files, not ports: QA is still the
+  only actor allowed to run the server-bound gates, one branch at a time.
 
-Fix every **confirmed** correctness finding (dispatch the implementer again), then **re-run QA** —
-a diff that changed after verification is unverified.
+Fix every **confirmed** correctness finding (dispatch the implementer again — it commits the fix,
+producing a **new SHA**), then **re-run QA against the new SHA** and give the reviewers that SHA
+too. A diff that changed after verification is unverified, and a SHA that changed after review is
+unreviewed.
 
 ## 5. QA — the bar the qa-verifier runs
+QA works in a **disposable worktree at the SHA under test**, not the shared checkout — the
+feature-specific check often mutates product code to prove the probe has teeth, and that mutation
+must be invisible to the reviewers reading in parallel and impossible to commit. From the repo root:
+
+```bash
+SCRATCH="$(mktemp -d)/qa"
+git worktree add --detach "$SCRATCH" <SHA>          # committed content only — see step 3's commit rule
+ln -s "$PWD/node_modules" "$SCRATCH/node_modules"   # deps are gitignored; vendor/ and .env aren't needed
+cd "$SCRATCH" && npm test && npm run boot-check     # both scripts derive their root from their own path
+git worktree remove --force "$SCRATCH" && git worktree prune   # discards every mutation with it
+```
+
+It isolates files, not ports — `npm test` (34917) and `npm run boot-check` (34921) still bind fixed
+ports, so the gates stay serialized (M8) exactly as before.
+
 1. **ESM parse** — copy each changed `js/*.js` to `.mjs` and `node --check`.
 2. **`npm test`** — all checks green. Never weaken an assertion; never hardcode the check count.
 3. **`npm run boot-check`** — the headless frontend gate (tool shell mounts, 0 JS errors, only the
