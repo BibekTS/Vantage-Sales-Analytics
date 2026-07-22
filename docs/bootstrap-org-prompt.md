@@ -112,7 +112,11 @@ docs/org-memory/codebase.md before any work") and ends with a "Memory-worthy" ha
                    an opinion, drop it. Grades findings CONFIRMED / PLAUSIBLE. Does NOT run the
                    port-binding gates (QA owns those). Reviews an IMMUTABLE artifact — the
                    implementer's commit SHA (`git show <SHA>:<path>`) or a saved patch — never the
-                   live working tree.
+                   live working tree; if it is reviewing a CHANGE and was given neither, it asks for
+                   one before reviewing. CARVE-OUT: that rule is scoped to change review. When the
+                   same agent is dispatched to HUNT an area (it is the bug-hunter fallback) there is
+                   no diff and no SHA by definition — it reads the current code at the ref it was
+                   given and hunts. It must never refuse a hunt for want of a SHA.
   • qa-verifier  — tools: Bash, Read, Glob, Grep.  The GATE. Runs the full bar in order
                    (lint/typecheck → tests → build/smoke → a feature-specific check from the
                    item's acceptance criteria) and reports output VERBATIM. Runs the bar in a
@@ -163,7 +167,11 @@ when the items' product files are disjoint), `/improve-cycle discover` (hunt & F
       qa-verifier together in one message — both given the implementer's commit SHA, not the
       working tree. Also run /code-review and /security-review if available.
       Fix every CONFIRMED finding (re-dispatch implementer), then RE-RUN QA — a diff that changed
-      after verification is unverified.
+      after verification is unverified. Express the re-run carve-out as an ALLOW-LIST, never a
+      deny-list of "product paths" (a deny-list fails open — a post-QA edit to package.json or to
+      the org's own .claude/* files would slip through un-reverified): a commit touching NOTHING
+      EXCEPT the records files (BACKLOG.md, docs/org-memory/*) does not invalidate review or QA;
+      EVERY other commit does, whatever it touches. There is no third category.
    5. QA BAR — lint/typecheck → tests → build/smoke → feature-specific check. Do not PR on red.
    6. RECORDS (before shipping, on the same branch) — update BACKLOG.md Status + commit it; fold
       every agent's Memory-worthy facts into docs/org-memory/codebase.md; append a one-line

@@ -86,8 +86,14 @@ Records step (step 6).
   feature commit on another branch, leaving the fix's own branch empty (2026-07-22). The handback
   must carry the **commit SHA** — everything downstream reads that SHA, not the tree. If an
   implementer ever returns a dirty tree anyway, the CEO commits it on the branch immediately,
-  before dispatching anyone else. Amending or rewording before the PR is always available;
-  recovering a swept diff is not.
+  before dispatching anyone else — but with the same staging discipline the implementer owes:
+  `git add` **only the paths the implementer's report named**, each spelled out, and **never
+  `git add -A` / `git add .` / `git commit -am`**. The CEO is precisely the actor that does not
+  know what the implementer touched; a blanket add there sweeps a concurrent session's in-flight
+  edit into this branch (the S13 incident with the roles swapped). If `git status` shows anything
+  the report did not name, **stop the cycle and hand it to the human** rather than committing it.
+  Rewording or amending is available up to the moment QA is dispatched, never after (step 7);
+  recovering a swept diff is never available at all.
 
 ## 4. Review Board ∥ QA — audit and verify in parallel
 Parallel reads are only safe against an **immutable artifact**. Hand every agent in this phase the
@@ -113,10 +119,14 @@ are independent reads of the same commit:
 Fix every **confirmed** correctness finding (dispatch the implementer again — it commits the fix,
 producing a **new SHA**), then **re-run QA against the new SHA** and give the reviewers that SHA
 too. A diff that changed after verification is unverified, and a SHA that changed after review is
-unreviewed. **Carve-out:** records-only commits — `BACKLOG.md` and `docs/org-memory/*` — do NOT
-invalidate review or QA, which is what makes steps 6 and 7 possible at all. Any commit touching a
-product path (`js/`, `server.js`, `lib/`, `scripts/`, `*.html`, `*.css`) does, and requires re-running
-both the Review Board and QA against the new SHA.
+unreviewed. **Carve-out (an allow-list, deliberately — deny-lists fail open):** a commit that
+touches **nothing except** `BACKLOG.md` and `docs/org-memory/*` does NOT invalidate review or QA —
+that is what makes steps 6 and 7 possible at all. **Every other commit does**, whatever it touches,
+and requires re-running both the Review Board and QA against the new SHA. **There is no third
+category:** if a path is not in that two-item list, it invalidates — `package.json`, `config.js`,
+`vendor/`, and the org's own `.claude/*` machinery included. Do not reason from "it isn't product
+code"; reason from "is this commit's file list a subset of those two entries?". Step 7 states the
+same partition ("may differ **only** by records-only commits") — they are one rule.
 
 ## 5. QA — the bar the qa-verifier runs
 QA works in a **disposable worktree at the SHA under test**, not the shared checkout — the
@@ -134,7 +144,8 @@ must be invisible to the reviewers reading in parallel and impossible to commit.
 ```bash
 # 1. SETUP — one Bash call. Write down BOTH printed paths; nothing here survives to the next call.
 ROOT="$PWD"; SCRATCH="$(mktemp -d)/qa"
-git worktree add --detach "$SCRATCH" <SHA>           # committed content only — see step 3's commit rule
+# a worktree carries COMMITTED content only — this is why the implementer must commit before handback
+git worktree add --detach "$SCRATCH" <SHA>
 ln -s "$ROOT/node_modules" "$SCRATCH/node_modules"   # node_modules is gitignored, so the worktree has none
 echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two literals into every call below
 
@@ -142,11 +153,22 @@ echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two litera
 cd /abs/scratch/from/the/echo && npm test            # scripts derive their root from their own path
 cd /abs/scratch/from/the/echo && npm run boot-check
 
-# 3. CLEANUP — `git -C` makes it cwd-independent, so it still exits 0 when run from inside the
-#    worktree it is deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
+# 3. THE MUTATION TEST — same self-contained shape, still INSIDE the worktree. Revert the fix at
+#    the scratch path, re-run the probe, confirm it now FAILS. Worked example:
+cd /abs/scratch/from/the/echo && git checkout <base> -- js/app.js && npm run boot-check
+
+# 4. CLEANUP — the LAST thing you do. NEVER before the mutation test: once the worktree is gone
+#    there is nowhere safe to mutate, and the tree you would reach for is the shared checkout.
+#    `git -C` makes it cwd-independent, so it still exits 0 when run from inside the worktree it is
+#    deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
 git -C /abs/root/from/the/echo worktree remove --force /abs/scratch/from/the/echo && \
-  git -C /abs/root/from/the/echo worktree prune      # discards every mutation with it
+  git -C /abs/root/from/the/echo worktree prune      # discards every mutation inside the worktree
 ```
+
+Removing the worktree discards every mutation **inside the worktree** — that is the safety property.
+`node_modules` is a **symlink into the shared checkout**, so it is OUT OF SCOPE: `worktree remove`
+deletes the link, not its target, and a mutation under `node_modules/` survives, is gitignored (no
+dirty-tree signal), and silently corrupts every later gate run. Never mutate anything under it.
 
 `vendor/` and `.env` are gitignored too, so the worktree has neither. That is fine **today** because
 the SDK is loaded from the CDN and both gate scripts force their own clean env — re-check this if
@@ -188,6 +210,18 @@ If any gate fails, fix and re-run. Do not proceed to a PR on red.
   lets a human reconcile the evidence against the PR head — if the head differs, it may differ only
   by records-only commits (see step 4's carve-out); say so. PR body ends with the
   `🤖 Generated with [Claude Code]` line.
+- **The verified SHA must be reachable.** Operations pushes **that commit itself**, never a
+  rewritten replacement: after QA has run, **never `git commit --amend`, never rebase, never
+  force-push** this branch. Reword before dispatching QA, not after — an amend turns the verified
+  commit into an orphan, and a human running `git log <qa-verified-sha>..HEAD` gets
+  `fatal: bad object`. That evidence is not merely stale, it is **unfalsifiable**.
+- Before opening the PR, prove it mechanically and state the result in the evidence section:
+  ```bash
+  git merge-base --is-ancestor <qa-verified-sha> HEAD   # exit 0 = the verified commit is on the head
+  git log --oneline <qa-verified-sha>..HEAD             # must be empty or records-only (step 4)
+  ```
+  A non-zero exit means the verified artifact was rewritten away — stop, re-run QA against the real
+  head, and cite that SHA instead.
 - Wait for the required checks: `smoke`, `esm-parse`, `guard` (plus advisory `boot`).
 - **Auto-merge if ALL hold:** every required check green ∧ code review found no confirmed
   correctness bug ∧ `guard` passed WITHOUT the `human-approved` label. Merge with

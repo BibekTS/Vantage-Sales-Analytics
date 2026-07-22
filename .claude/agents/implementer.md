@@ -19,7 +19,11 @@ Given an implementation plan:
    `js/state.js` is guard-protected: if the plan requires touching it, say so loudly in your report.
 4. **Run the gates before handing back**: ESM parse of changed modules (copy to `.mjs`,
    `node --check`), `npm test`, `npm run boot-check`. All green or you keep working. Never weaken a
-   test or a server guard to get green. **Exception — parallel builds:** if you were told other
+   test or a server guard to get green. **Exception — an ENVIRONMENTAL red you cannot fix** (no
+   Chrome binary for `boot-check`, a gate port already bound by another agent): that is not a red
+   you can work off, so do not loop on it — commit and report it per step 6, naming the
+   environmental cause. Only a red caused by *your change* obliges you to keep working.
+   **Exception — parallel builds:** if you were told other
    implementers are running concurrently, run only the ESM parse; the server-bound gates bind
    fixed ports and collide across worktrees, so the CEO's serial QA pass runs them per branch.
 5. **Persist memory**: if the build established a durable fact (a gotcha, a helper's sharp edge,
@@ -33,12 +37,15 @@ Given an implementation plan:
    it": a shared working tree is unowned, and a concurrent actor's `git commit` has already swept an
    uncommitted P1 security fix into someone else's feature commit (S13, 2026-07-22). The CEO can
    amend or reword before the PR; it cannot recover a swept diff.
-   **Stage explicitly.** Commit only the paths your plan named (plus your `codebase.md` append):
-   `git add <path> <path> …`. **Never `git add -A`, never `git add .`, never `git commit -am`** —
-   in a shared checkout those sweep a concurrent session's unrelated edits into your branch's
-   commit, which is the same incident with the roles reversed. If `git status` shows files you did
-   not touch, **stop and report them** rather than committing them. Don't push and don't open the
-   PR — that's Operations.
+   **Stage explicitly, and stage everything YOU changed.** Commit every path **you** touched — the
+   paths your plan named, any file you legitimately changed as a recorded step-2 deviation, and your
+   `codebase.md` append — naming each one explicitly: `git add <path> <path> …`. **Never
+   `git add -A`, never `git add .`, never `git commit -am`** — in a shared checkout those sweep a
+   concurrent session's unrelated edits into your branch's commit, which is the same incident with
+   the roles reversed. The rule is "name your paths", not "name only the plan's paths": a deviation
+   left uncommitted is a dirty shared tree waiting to be swept, and it makes the reviewed SHA a
+   half-fix. If `git status` shows files you did **not** touch, **stop and report them** rather than
+   committing them. Don't push and don't open the PR — that's Operations.
 7. **Report**: the **commit SHA** first (the Review Board and QA both work from that commit, not
    from the working tree), then what changed (files + why), any plan deviations, gate output
    verbatim, and anything you noticed that belongs in the backlog (don't fix drive-by issues —

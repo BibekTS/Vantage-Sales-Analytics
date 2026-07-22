@@ -37,7 +37,8 @@ reading that checkout in parallel, and your feature-specific check may mutate co
 ```bash
 # 1. SETUP — one Bash call. Write down BOTH printed paths; nothing here survives to the next call.
 ROOT="$PWD"; SCRATCH="$(mktemp -d)/qa"
-git worktree add --detach "$SCRATCH" <SHA>           # committed content only — see step 3's commit rule
+# a worktree carries COMMITTED content only — this is why the implementer must commit before handback
+git worktree add --detach "$SCRATCH" <SHA>
 ln -s "$ROOT/node_modules" "$SCRATCH/node_modules"   # node_modules is gitignored, so the worktree has none
 echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two literals into every call below
 
@@ -45,17 +46,29 @@ echo "ROOT=$ROOT"; echo "SCRATCH=$SCRATCH"           # ← copy these two litera
 cd /abs/scratch/from/the/echo && npm test            # scripts derive their root from their own path
 cd /abs/scratch/from/the/echo && npm run boot-check
 
-# 3. CLEANUP — `git -C` makes it cwd-independent, so it still exits 0 when run from inside the
-#    worktree it is deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
+# 3. THE MUTATION TEST — same self-contained shape, still INSIDE the worktree. Revert the fix at
+#    the scratch path, re-run the probe, confirm it now FAILS. Worked example:
+cd /abs/scratch/from/the/echo && git checkout <base> -- js/app.js && npm run boot-check
+
+# 4. CLEANUP — the LAST thing you do. NEVER before the mutation test: once the worktree is gone
+#    there is nowhere safe to mutate, and the tree you would reach for is the shared checkout.
+#    `git -C` makes it cwd-independent, so it still exits 0 when run from inside the worktree it is
+#    deleting (a bare `git worktree prune` there dies 128: cwd no longer exists).
 git -C /abs/root/from/the/echo worktree remove --force /abs/scratch/from/the/echo && \
-  git -C /abs/root/from/the/echo worktree prune      # discards every mutation with it
+  git -C /abs/root/from/the/echo worktree prune      # discards every mutation inside the worktree
 ```
 
 `--detach` avoids "branch already checked out"; the scripts derive their root from their own path,
 so they boot the scratch copy's `server.js`. `vendor/` and `.env` are gitignored too, so the
 worktree has neither — fine **today** because the SDK is loaded from the CDN and both gate scripts
 force their own clean env; re-check if either changes. Removing the worktree discards every mutation
-— that is the safety property, so never skip the cleanup. It isolates **files, not ports**:
+**inside the worktree** — that is the safety property, so never skip the cleanup, and never run it
+before the mutation test (recipe step 4 is last for that reason). `node_modules` is a **symlink into
+the shared checkout** and is therefore OUT OF SCOPE: `worktree remove` deletes the link, not its
+target, so a mutation under `node_modules/` survives, is gitignored (no dirty-tree signal), and
+silently corrupts every later gate run. Never mutate anything under it.
+
+It isolates **files, not ports**:
 `npm test` (34917) and `npm run boot-check` (34921) still bind fixed ports, so run them one at a
 time and only while no other agent is running them (org-memory "Gates", M8).
 
@@ -72,12 +85,20 @@ Run the full bar, in order, capturing output verbatim:
    **Mutation-test the probe** whenever the item's acceptance hinges on it: in the scratch worktree
    only, revert the fix, re-run, and confirm the probe now FAILS — a probe that passes without the
    fix proves nothing (org-memory "Gates": a boot-check probe that stubs `window.open` passed
-   vacuously with the guard fully removed). Report both directions. Never carry a mutation out of
-   the scratch worktree: delete the worktree rather than reverting by hand.
+   vacuously with the guard fully removed). This is **recipe step 3**, and it runs while the
+   worktree still exists — cleanup (recipe step 4) comes after it, never before. Report both
+   directions. Never carry a mutation out of the scratch worktree: delete the worktree rather than
+   reverting by hand.
 
-Hard rules: never weaken a test, never mark a gate "effectively passing", and never edit product
-code in the repo checkout. The ONE exception is the throwaway mutation inside your scratch
-worktree — it is deleted, never committed, never pushed, and never a fix. You still do not fix:
-if a gate is red, report it precisely and stop.
+Hard rules, each standing on its own:
+- **Never edit product code in the repo checkout.** The ONE exception is the throwaway mutation
+  inside your scratch worktree — it is deleted, never committed, never pushed, and never a fix.
+- **Never weaken a test** and **never mark a gate "effectively passing".** These admit **no**
+  exception, **in any tree** — the scratch worktree is not a licence to edit `scripts/smoke-test.mjs`
+  or any assertion until it goes green. A gate is red until the *product* is fixed; a green pasted
+  from a weakened check inside a worktree you then delete is unreproducible by construction, which
+  is precisely why it is forbidden.
+
+You still do not fix: if a gate is red, report it precisely and stop.
 Your report is pasted into the PR's evidence section — include the real output lines, the check
 counts as the script reported them, and a one-line PASS/FAIL verdict per gate.
