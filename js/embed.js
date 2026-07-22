@@ -21,6 +21,7 @@ import {
   RuntimeFilterOp,
   CustomActionsPosition,
   CustomActionTarget,
+  startAutoMCPFrameRenderer,
 // TS-SDK-VERSION: 1.49.0 — must equal ts-sdk-version.json (smoke-test asserts it; ts-watch bumps
 // marker + URL + JSON together). If you switch to the self-hosted /vendor/ URL, KEEP this marker:
 // it is what the pin checks read once the version is gone from the import path.
@@ -31,6 +32,13 @@ import {
 // in config.js to an absolute URL (e.g. 'http://localhost:3000') if you keep the frontend on
 // a separate origin like VS Code Live Server.
 const API_BASE = (typeof window !== 'undefined' && window.TS_API_BASE) || '';
+
+/**
+ * Re-exported so the Spotter MCP chat can turn the MCP server's `tsmcp=true` marker
+ * iframes into real, SDK-authenticated embeds. It is a DOM observer, not an embed
+ * component, so it belongs here (next to init) rather than in doRender.
+ */
+export { startAutoMCPFrameRenderer };
 
 /**
  * getAuthToken callback for trusted auth. Calls our backend token service, which holds the

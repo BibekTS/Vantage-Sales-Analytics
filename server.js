@@ -25,6 +25,8 @@
  *     Otherwise the browser could mint a token into a privileged group (e.g. Administrator).
  *   • /api/filter-values forwards the CALLER'S OWN token — it never mints an admin token on the
  *     caller's behalf, so it cannot be used as an unauthenticated data-exfiltration proxy.
+ *   • /api/spotter-mcp/* forwards the CALLER'S OWN bearer to the MCP proxy and never mints, so it
+ *     is fail-closed by construction (no token → 401) and Spotter runs as the real end user.
  *   • Static serving is restricted to the frontend assets (never source, .env, docs, or bundles).
  *
  * In production you would REMOVE the body-supplied username entirely and derive it from a
@@ -38,6 +40,8 @@
  *   GET/DELETE /api/webhook/events — read/clear the in-memory webhook inbox the UI polls
  *   POST /api/filter-values  — filter-value discovery using the CALLER'S bearer token (no minting)
  *   POST /api/ts-rest        — CORS relay for an allowlisted set of REST paths, using the CALLER'S token
+ *   POST /api/spotter-mcp/chat — Spotter 3 MCP chat relay, SSE (uses the CALLER'S token)
+ *   GET  /api/spotter-mcp/health — MCP connectivity + tool list (uses the CALLER'S token)
  *   (static) /js /css /vendor /config.js /  — the frontend only
  *   GET  /docs/tse-best-practices.html — the TSE best-practices compendium (single file, not the docs dir)
  */
@@ -73,6 +77,10 @@ const ALLOW_DEV_PROXY = truthy(process.env.TS_ALLOW_DEV_PROXY); // permit the /a
 // becomes an open, unauthenticated data sink. When a shared secret is set we verify ThoughtSpot's
 // HMAC_SHA256 signature (configured via signature_verification in webhooks/create).
 const ALLOW_WEBHOOK_SINK = truthy(process.env.TS_ALLOW_WEBHOOK_SINK);
+// Spotter MCP chat (the "Spotter Chat (MCP)" rail section). Like /api/filter-values it forwards
+// the CALLER'S OWN bearer and never mints, so it is fail-closed by construction: no token → 401.
+const SPOTTER_MCP_URL = process.env.TS_MCP_URL || '';
+const SPOTTER_MCP_SOURCE = process.env.TS_MCP_DATA_SOURCE_ID || ''; // optional pinned Worksheet/Model
 const WEBHOOK_SECRET = process.env.TS_WEBHOOK_SECRET || '';
 const WEBHOOK_SIG_HEADER = (process.env.TS_WEBHOOK_SIG_HEADER || 'x-ts-signature').toLowerCase();
 // Real scheduled-Liveboard deliveries arrive as multipart/form-data with the rendered report as a
@@ -553,6 +561,7 @@ const REST_RELAY_ALLOW = new Set([
   '/api/rest/2.0/tags/create',
   '/api/rest/2.0/tags/assign',
   '/api/rest/2.0/auth/session/user',
+  '/api/rest/2.0/auth/session/token', // introspect the CALLER'S own session token (never mints one)
   '/api/rest/2.0/schedules/create', // webhook composer → create a real Liveboard schedule (caller's token)
 ]);
 app.post('/api/ts-rest', rateLimiter({ windowMs: 60_000, max: 120 }), async (req, res) => {
@@ -586,6 +595,34 @@ app.post('/api/ts-rest', rateLimiter({ windowMs: 60_000, max: 120 }), async (req
   }
 });
 
+// ── /api/spotter-mcp/* — Spotter 3 MCP chat relay ─────────────────────────────────────────────
+// Browser question + the CALLER'S OWN bearer ──▶ this server ──MCP (Streamable HTTP)──▶
+// agent.thoughtspot.app ──▶ SSE stream back. It never mints (no token → 401, like
+// /api/filter-values), so Spotter runs as the real end user and their RLS applies. The
+// label-customization layer rewrites vendor terms in the prose; URLs and iframe_url are never
+// touched. Implementation: lib/spotter-mcp/ (ESM — the MCP SDK is ESM-only, so the router is
+// loaded with a dynamic import on first request rather than require()d).
+{
+  let routerPromise = null;
+  const loadRouter = () =>
+    (routerPromise ??= import('./lib/spotter-mcp/router.mjs')
+      .then(({ createSpotterMcpRouter }) =>
+        createSpotterMcpRouter({
+          defaultHost: TS_HOST, // only a fallback: the caller sends the host they connected to
+          ...(SPOTTER_MCP_URL ? { mcpUrl: SPOTTER_MCP_URL } : {}),
+          defaultDataSourceId: SPOTTER_MCP_SOURCE,
+          log: console.warn,
+        }))
+      .catch((err) => { routerPromise = null; throw err; }));
+
+  app.use('/api/spotter-mcp', rateLimiter({ windowMs: 60_000, max: 120 }), (req, res, next) => {
+    loadRouter().then((router) => router(req, res, next)).catch((err) => {
+      console.error('[spotter-mcp] router load failed', err);
+      res.status(500).json({ error: `Spotter MCP router failed to load: ${err.message}` });
+    });
+  });
+}
+
 // ── Static frontend — explicit allowlist of asset paths (never source, .env, docs, bundles) ────
 const staticOpts = { dotfiles: 'ignore', index: false };
 app.use('/js', express.static(path.join(__dirname, 'js'), staticOpts));
@@ -615,7 +652,8 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`     JIT (auto_create): ${ALLOW_JIT ? 'ENABLED (TS_ALLOW_JIT)' : 'disabled (fail-closed)'}`);
   console.log(`     Group guard      : ${GROUP_WILDCARD ? 'ANY (TS_GROUP_ALLOWLIST=*)' : (GROUP_ALLOWLIST.size ? [...GROUP_ALLOWLIST].join(', ') : 'none allowed')}`);
   console.log(`     Write-back stub  : ${ALLOW_DEV_PROXY ? 'enabled' : 'disabled'}`);
-  console.log(`     Webhook sink     : ${ALLOW_WEBHOOK_SINK ? `enabled${WEBHOOK_SECRET ? ' (HMAC_SHA256 verify on)' : ' (no secret — unverified)'}` : 'disabled (fail-closed)'}\n`);
+  console.log(`     Webhook sink     : ${ALLOW_WEBHOOK_SINK ? `enabled${WEBHOOK_SECRET ? ' (HMAC_SHA256 verify on)' : ' (no secret — unverified)'}` : 'disabled (fail-closed)'}`);
+  console.log(`     Spotter MCP chat : relays your own token (never mints)\n`);
 });
 
 module.exports = app; // exported for the smoke test

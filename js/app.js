@@ -13,6 +13,7 @@ import { getState, setState, subscribe, loadState, resetState, getHostSource, ho
 import * as Discovery from './discovery.js';
 import { openAuthModal, buildTrustedAuthConfig, seedAuthHooks } from './auth.js';
 import { fetchAllRows, groupStatements, downloadStatementsPdf } from './invoice-pdf.js';
+import { renderSpotterMcpChat } from './spotter-mcp.js';
 
 // ── Embed catalogue ──────────────────────────────────────────────────────────
 const EMBEDS = [
@@ -24,13 +25,14 @@ const EMBEDS = [
   { id: 'viz',              name: 'Single Viz',        cls: 'LiveboardEmbed', needs: 'viz' },
   { id: 'fullapp',          name: 'Full App',          cls: 'AppEmbed',       needs: 'none' },
   { id: 'ai-insights',      name: 'AI Insights (REST)',cls: 'Spotter REST',   needs: 'worksheet' },
+  { id: 'spotter-chat',     name: 'Spotter Chat (MCP)',cls: 'Spotter MCP',    needs: 'none' },
 ];
 const META = Object.fromEntries(EMBEDS.map(e => [e.id, e]));
 
 // Rail grouping — mirrors how the SDK families the surfaces: the three search-driven
 // embeds, the four LiveboardEmbed flavours, and the two whole-app / no-iframe options.
 const RAIL_GROUPS = [
-  { label: 'Search & AI',  ids: ['search', 'spotter'] },
+  { label: 'Search & AI',  ids: ['search', 'spotter', 'spotter-chat'] },
   { label: 'Liveboards',   ids: ['liveboard', 'liveboard-custom', 'ai-highlights', 'viz'] },
   { label: 'App & REST',   ids: ['fullapp', 'ai-insights'] },
 ];
@@ -45,6 +47,7 @@ const EMBED_BLURBS = {
   viz:              'Embed a single visualization from a Liveboard — or one standalone Answer — on its own.',
   fullapp:          'Embed the entire ThoughtSpot app — nav bar, search, Liveboards, the works.',
   'ai-insights':    'Headless Spotter over REST — you render the AI answer cards yourself, with no ThoughtSpot iframe.',
+  'spotter-chat':   'Your own chat UI over the Spotter 3 MCP server — streamed prose with vendor terms relabelled, answers as embedded charts.',
 };
 
 // Menu actions offered in the "Modify actions" panel, listed per section.
@@ -236,6 +239,23 @@ let tokenServerAvailable = true; // Trusted Auth mints via the local token serve
 
 // ── AI Insights (headless REST panel) runtime state ───────────────────────────
 let aiQuery = '';   // last free-text question typed into the AI Insights panel
+
+// Spotter Chat (MCP) panel preferences. Deliberately module-local rather than in
+// state.js: they are presentation choices for a panel that isn't an SDK embed, and
+// they carry no shareable meaning (a link can't replay someone else's MCP session).
+const mcpPrefs = {
+  showThinking: true,     // render the is_thinking lane at all
+  frameHeight: 'auto',    // 'auto' grows each answer frame to its content; else px
+  liveboardName: '',      // prefills the create_dashboard title
+  streamChunks: true,     // token-by-token, vs holding each message until complete
+  pollIntervalMs: 600,    // get_session_updates cadence
+  systemContext: '',      // persona / standing instructions → send_session_message additional_context
+  // Vendor relabeling, merged OVER lib/spotter-mcp/labels.json for this browser only.
+  // null = use the server's file unchanged; an object overrides/extends it per request.
+  labels: null,
+};
+let mcpHealth = null;   // last /api/spotter-mcp/health payload — the live tool list
+let mcpLabelsDraft = null; // Labels editor rows incl. still-blank ones — must outlive renderInspector()
 let aiLimit = 3;    // how many insights to auto-generate (each = 1 answer + 1 data call)
 let aiBusy = false; // a relevant-questions / answer call is in flight
 let pendingSpotterQuery = null; // NL question to run in Spotter on its next load (AI Insights bridge)
@@ -612,6 +632,7 @@ function render() {
   // Headless AI Insights (REST) — a custom DOM panel, not an SDK iframe embed.
   if (s.section === 'ai-insights') {
     if (currentEmbed) { try { currentEmbed.destroy(); } catch (_) {} currentEmbed = null; }
+    destroySpotterMcp();
     setOverlay('hidden');
     flowReset(s.section);
     refreshCode();
@@ -619,10 +640,22 @@ function render() {
     return;
   }
 
+  // Spotter MCP chat — also a custom DOM panel: the server relays to the MCP proxy over SSE.
+  if (s.section === 'spotter-chat') {
+    if (currentEmbed) { try { currentEmbed.destroy(); } catch (_) {} currentEmbed = null; }
+    document.getElementById('ai-insights-panel')?.remove();
+    setOverlay('hidden');
+    flowReset(s.section);
+    refreshCode();
+    mountSpotterMcp(s);
+    return;
+  }
+
   applyConfig();
   if (currentEmbed) { try { currentEmbed.destroy(); } catch (_) {} currentEmbed = null; }
-  // Drop any leftover AI Insights panel when switching back to a real embed.
+  // Drop any leftover custom panel when switching back to a real embed.
   document.getElementById('ai-insights-panel')?.remove();
+  destroySpotterMcp();
 
   $('#loading-sub').textContent = `${META[s.section].cls} → ${s.host}`;
   setOverlay('loading');
@@ -1803,6 +1836,10 @@ function renderInspector() {
     $('#insp-reset').onclick = () => { aiQuery = ''; renderInspector(); render(); };
     return;
   }
+  if (s.section === 'spotter-chat') {
+    renderMcpInspector(s, body);
+    return;
+  }
   if (s.section === 'ai-highlights') {
     const aiNote = el('div', 'sec-note');
     aiNote.textContent = 'Renders the selected Liveboard, then fires HostEvent.AIHighlights to open the insights panel automatically. Requires AI Highlights + KPI anomaly detection enabled on the instance (admin); SDK ≥ 1.44 / TS ≥ 10.15.';
@@ -1833,6 +1870,203 @@ function renderInspector() {
 const openAccordions = new Set(['Data object']);
 
 /** Collapsible accordion section. */
+/**
+ * Inspector for the Spotter Chat (MCP) section.
+ *
+ * The MCP chat is NOT an SDK embed, so none of the usual embed knobs apply — no
+ * visibleActions, no runtime filters, no HostEvents. What IS customizable splits
+ * three ways, and the panel is grouped to say so:
+ *   • the SESSION      — which data source create_analysis_session pins to
+ *   • the TRANSCRIPT   — what our own chat surface does with the streamed events
+ *   • the ANSWER FRAME — AutoMCPFrameRendererViewConfig, the one genuinely
+ *     SDK-shaped surface (it inherits this page's init() theme + customizations)
+ * plus a read-only view of the relay itself, so the live tool list is visible
+ * rather than guessed at.
+ */
+function renderMcpInspector(s, body) {
+  const note = el('div', 'sec-note');
+  note.textContent = 'Your own chat UI over the Spotter 3 MCP server (create_analysis_session → send_session_message → '
+    + 'get_session_updates), relayed by the local server over SSE. It runs as YOU — the relay forwards the token from '
+    + 'your current connection (trusted auth, or the one behind your browser session) and never mints, so your object '
+    + 'access and RLS apply. Vendor terms in the streamed prose are rewritten from lib/spotter-mcp/labels.json; URLs '
+    + 'and answer iframes are never touched.';
+  body.appendChild(note);
+
+  // Every pref below re-mounts the panel, which starts a NEW analysis session.
+  // Say so once here rather than repeating it on each field.
+  const remount = () => { renderInspector(); render(); };
+
+  // ── Session ────────────────────────────────────────────────────────────────
+  // Data source is OPTIONAL here (unlike every embed section): with none pinned,
+  // Spotter picks a source per question — so the picker carries an explicit "Auto".
+  const src = el('div', 'sec-body');
+  src.appendChild(labeledSelect('Data source (optional)', s.worksheetId,
+    [{ id: '', name: 'Auto — let Spotter choose' }, ...(discovered.worksheets || [])],
+    v => { setState({ worksheetId: v }); remount(); },
+    'Pins every analysis session to one Worksheet/Model (create_analysis_session data_source_id).',
+    !connected));
+
+  // System context: standing instructions forwarded as send_session_message
+  // additional_context on EVERY turn — the persona surface for a real embed
+  // ("answer in French", "you are advising the CFO — lead with risk").
+  const ctxLbl = el('label', 'sec-note');
+  ctxLbl.textContent = 'System context (persona)';
+  const ctxArea = document.createElement('textarea');
+  ctxArea.className = 'inp smcp-ctx';
+  ctxArea.rows = 3;
+  ctxArea.placeholder = 'e.g. Answer in French. Keep answers under three sentences.';
+  ctxArea.value = mcpPrefs.systemContext;
+  ctxArea.addEventListener('change', () => { mcpPrefs.systemContext = ctxArea.value; remount(); });
+  const ctxNote = el('div', 'sec-note');
+  ctxNote.textContent = 'Sent with every question as send_session_message additional_context. Steers tone, language, '
+    + 'and framing; it cannot grant access to data the signed-in user can’t already see.';
+  src.append(ctxLbl, ctxArea, ctxNote);
+  body.appendChild(accordion('Session', 'create_analysis_session', src, true));
+
+  // ── Transcript ─────────────────────────────────────────────────────────────
+  const chat = el('div', 'sec-body');
+  chat.appendChild(toggleField('Show reasoning', mcpPrefs.showThinking,
+    v => { mcpPrefs.showThinking = v; remount(); },
+    'Updates flagged is_thinking are the agent reasoning about the question. Shown folded into a '
+    + '“Reasoning” disclosure; off drops them entirely and only the answer prose renders.'));
+  chat.appendChild(toggleField('Stream tokens', mcpPrefs.streamChunks,
+    v => { mcpPrefs.streamChunks = v; remount(); },
+    'On, text_chunk updates are relayed as they arrive (token by token). Off, the relay parks each '
+    + 'lane’s chunks and releases them only at a message boundary — same content, delivered whole.'));
+  chat.appendChild(enumSelect('Poll interval', String(mcpPrefs.pollIntervalMs),
+    [300, 600, 1000, 2000].map(v => ({ value: String(v), label: `${v} ms` })),
+    v => { mcpPrefs.pollIntervalMs = Number(v); remount(); },
+    'How often the relay calls get_session_updates. There is no push channel — the MCP session is '
+    + 'polled, so this is the real floor on how fast tokens can reach the page.'));
+  body.appendChild(accordion('Transcript', 'get_session_updates', chat, true));
+
+  // ── Labels ─────────────────────────────────────────────────────────────────
+  // The substitution layer, editable per browser. Sent with each question and merged
+  // over labels.json server-side, so trying a relabel never means editing a file.
+  const labels = el('div', 'sec-body');
+  const labelNote = el('div', 'sec-note');
+  labelNote.textContent = 'Rewrites vendor terms in the streamed prose and answer titles — “Liveboard” → “Dashboard”, '
+    + 'and so on. Matches on word boundaries, so “Spotters” is left alone, and it holds back a partial tail so a term '
+    + 'split across two chunks still matches. URLs and iframe content are NEVER substituted: text inside an answer '
+    + 'frame is real ThoughtSpot UI, governed by the Embed SDK’s stringIDs instead.';
+  labels.appendChild(labelNote);
+
+  const rows = el('div', 'mcp-labels');
+  // Seed from the server's file the first time, so the editor starts from what is
+  // actually in effect rather than from an empty box. The draft lives OUTSIDE this
+  // render (module-level) because renderInspector() rebuilds the whole panel: a
+  // fresh, still-unnamed row must survive that rebuild — deriving the rows from the
+  // committed labels alone filtered the new blank row straight back out, which is
+  // why "+ Add label" used to do nothing.
+  if (!mcpLabelsDraft) {
+    const current = mcpPrefs.labels ?? (mcpHealth && !mcpHealth.error ? mcpHealth.labels : null) ?? {};
+    mcpLabelsDraft = Object.entries(current);
+  }
+  const draft = mcpLabelsDraft;
+  const commit = () => {
+    const next = {};
+    for (const [from, to] of draft) if (from.trim()) next[from.trim()] = to.trim();
+    mcpPrefs.labels = Object.keys(next).length ? next : null;
+    remount();
+  };
+  draft.forEach((pair, i) => {
+    const row = el('div', 'mcp-label-row');
+    const from = el('input', 'inp'); from.type = 'text'; from.value = pair[0]; from.placeholder = 'Liveboard';
+    const to = el('input', 'inp'); to.type = 'text'; to.value = pair[1]; to.placeholder = 'Dashboard';
+    from.addEventListener('change', () => { draft[i][0] = from.value; commit(); });
+    to.addEventListener('change', () => { draft[i][1] = to.value; commit(); });
+    const rm = el('button', 'mcp-label-x', '×');
+    rm.type = 'button';
+    rm.title = 'Remove';
+    rm.addEventListener('click', () => { draft.splice(i, 1); commit(); });
+    row.append(from, el('span', 'mcp-label-arrow', '→'), to, rm);
+    rows.appendChild(row);
+  });
+  labels.appendChild(rows);
+
+  const addLbl = el('button', 'sec-add', '+ Add label');
+  addLbl.type = 'button';
+  addLbl.addEventListener('click', () => { draft.push(['', '']); renderInspector(); });
+  labels.appendChild(addLbl);
+
+  if (mcpPrefs.labels) {
+    const revert = el('button', 'sec-add', 'Reset to labels.json');
+    revert.type = 'button';
+    revert.addEventListener('click', () => { mcpPrefs.labels = null; mcpLabelsDraft = null; remount(); });
+    labels.appendChild(revert);
+  }
+  body.appendChild(accordion('Labels', mcpPrefs.labels ? 'overridden' : 'labels.json', labels));
+
+  // ── Answer frame ───────────────────────────────────────────────────────────
+  const frame = el('div', 'sec-body');
+  const frameNote = el('div', 'sec-note');
+  frameNote.textContent = 'Answers arrive as an iframe_url carrying the MCP server’s tsmcp=true marker — not a usable '
+    + 'embed URL. startAutoMCPFrameRenderer() watches the DOM and swaps each marker iframe for a real embed, merging '
+    + 'this page’s init() config over the marker’s own params — so the auth type, theme, and anything set under '
+    + 'Custom styles already apply to these charts.';
+  frame.appendChild(frameNote);
+  frame.appendChild(enumSelect('Frame height', String(mcpPrefs.frameHeight),
+    [{ value: 'auto', label: 'Auto — grow to the chart' },
+      ...[320, 440, 560, 700].map(v => ({ value: String(v), label: `${v} px` }))],
+    v => { mcpPrefs.frameHeight = v === 'auto' ? 'auto' : Number(v); remount(); },
+    'AutoMCPFrameRendererViewConfig.frameParams.height. Auto starts compact and resizes each frame '
+    + 'from the EMBED_HEIGHT the embedded app reports — a KPI answer settles near 200px, a chart near '
+    + '600 — falling back to the starting height if the app never reports one.'));
+  body.appendChild(accordion('Answer frame', 'startAutoMCPFrameRenderer', frame));
+
+  // ── Liveboard ──────────────────────────────────────────────────────────────
+  const lb = el('div', 'sec-body');
+  const lbNote = el('div', 'sec-note');
+  lbNote.textContent = 'Liveboard creation is NOT part of the analysis session — ask the in-session agent for one and it '
+    + 'will correctly say it can’t. It is a separate MCP tool, create_dashboard(title, answers, note_tile), which the '
+    + 'panel calls with the answer_ids you leave ticked. Needs content-creation privileges on the instance.';
+  lb.appendChild(lbNote);
+  const lbLimits = el('div', 'sec-note');
+  lbLimits.textContent = 'Those three arguments are the WHOLE customization surface — create_dashboard takes no layout, '
+    + 'tile size, tab, tag or sharing options. Anything past them (resizing tiles, adding filters, sharing) happens on '
+    + 'the Liveboard afterwards, in ThoughtSpot or via the metadata REST APIs.';
+  lb.appendChild(lbLimits);
+  lb.appendChild(textField('Default Liveboard name', mcpPrefs.liveboardName,
+    v => { mcpPrefs.liveboardName = v; remount(); }, 'Spotter session'));
+  body.appendChild(accordion('Liveboard', 'create_dashboard', lb));
+
+  // ── Relay (read-only) ──────────────────────────────────────────────────────
+  // The tool list is the answer to "what can this MCP server actually do?", and it
+  // varies by api-version — so read it from the live endpoint instead of asserting it.
+  const relay = el('div', 'sec-body');
+  const relayOut = el('div', 'sec-note smcp-relay-out');
+  const paintHealth = () => {
+    relayOut.textContent = mcpHealth
+      ? (mcpHealth.error
+        ? `✗ ${mcpHealth.error}`
+        : `endpoint ${mcpHealth.mcpUrl}\nhost ${mcpHealth.host}\ntools: ${(mcpHealth.tools || []).join(', ') || '(none)'}`)
+      : 'Not checked yet — the tool list depends on the api-version in TS_MCP_URL.';
+  };
+  paintHealth();
+  const check = el('button', 'sec-add', 'Check relay');
+  check.type = 'button';
+  check.addEventListener('click', async () => {
+    check.disabled = true;
+    relayOut.textContent = 'Checking…';
+    try {
+      const cred = await resolveTsBearer();
+      if (!cred.ok) throw new Error(cred.error);
+      const r = await fetch(`${API_BASE}/api/spotter-mcp/health?tsHost=${encodeURIComponent(s.host || '')}`,
+        { headers: { Authorization: `Bearer ${cred.token}` } });
+      mcpHealth = await r.json();
+      if (!r.ok) mcpHealth = { error: mcpHealth?.message || mcpHealth?.error || `HTTP ${r.status}` };
+    } catch (err) {
+      mcpHealth = { error: String(err.message || err) };
+    }
+    paintHealth();
+    check.disabled = false;
+  });
+  relay.append(check, relayOut);
+  body.appendChild(accordion('Relay', '/api/spotter-mcp/health', relay));
+
+  $('#insp-reset').onclick = () => { destroySpotterMcp(); renderInspector(); render(); };
+}
+
 function accordion(title, count, contentEl, openByDefault = false) {
   const wrap = el('div', 'acc');
   const head = el('button', 'acc-head', `<span>${title}</span><span class="acc-r"><span class="acc-count">${count || ''}</span><span class="acc-chev">›</span></span>`);
@@ -3039,6 +3273,63 @@ function sectionAiControls(s) {
   f.appendChild(el('div', 'fld-hint', 'limit_relevant_questions — how many insights to auto-generate. Change, then ↻ Regenerate in the panel.'));
   c.appendChild(f);
   return accordion('AI options', '', c, true);
+}
+
+// ── Spotter Chat (MCP) ───────────────────────────────────────────────────────
+// A custom chat UI over ThoughtSpot's Spotter 3 MCP server. The browser never talks
+// to the MCP proxy directly — /api/spotter-mcp/chat relays it (server-side token) and
+// streams SSE back — forwarding OUR bearer, so the relay never mints and no token → 401.
+let spotterMcpPanel = null;
+
+function destroySpotterMcp() {
+  if (!spotterMcpPanel) return;
+  try { spotterMcpPanel.destroy(); } catch (_) {}
+  spotterMcpPanel = null;
+}
+
+/**
+ * The bearer the MCP relay runs as — OUR credential, resolved fresh per turn:
+ *   • Trusted auth → the token we already minted and handed to the SDK.
+ *   • Browser session → the token behind the cookie session (getCurrentUserToken,
+ *     9.4.0.cl+); it introspects the session rather than minting anything new.
+ */
+async function resolveTsBearer() {
+  const s = getState();
+  const held = Discovery.getBearerToken();
+  if (held) return { ok: true, token: held };
+  if (!s.host) return { ok: false, error: 'Connect to ThoughtSpot first — this chat runs as you.' };
+
+  const r = await Discovery.sessionToken(s.host);
+  if (r.ok) return { ok: true, token: r.token };
+  return {
+    ok: false,
+    error: `Couldn't read a bearer from your ThoughtSpot session (${r.error}). `
+      + 'Needs 9.4.0.cl+ for /auth/session/token — or connect with “Auth: Trusted token” instead.',
+  };
+}
+
+function mountSpotterMcp(s) {
+  destroySpotterMcp();
+  const ws = (discovered.worksheets || []).find(w => w.id === s.worksheetId);
+  spotterMcpPanel = renderSpotterMcpChat($('#ts-embed-container'), {
+    apiBase: API_BASE,
+    tsHost: s.host || '',
+    dataSourceId: s.worksheetId || '',
+    sourceName: ws ? ws.name : '',
+    ...mcpPrefs,
+    getToken: resolveTsBearer,
+    // Drive the SDK Lifecycle tab from the panel's own log lines: this section has
+    // no iframe handshake, so without this the flow steps never leave "pending".
+    onEvent: (kind, msg) => {
+      logEvent(kind, msg);
+      if (kind !== 'MCP') return;
+      const m = String(msg);
+      if (m.startsWith('POST /api/spotter-mcp/chat')) mcpFlowRestart();
+      else if (m.startsWith('new analysis session')) mcpFlowMark('send');
+      else if (m.startsWith('streaming session updates')) mcpFlowMark('poll');
+      else if (m.startsWith('answer:') || m === 'turn complete') mcpFlowMark('render');
+    },
+  });
 }
 
 // Build + mount the panel into #ts-embed-container (replacing any prior embed/panel).
@@ -5132,6 +5423,7 @@ async function refreshPersonalCopies() {
 function generateCode() {
   const s = getState();
   if (s.section === 'ai-insights') return aiInsightsCode(s);
+  if (s.section === 'spotter-chat') return spotterMcpCode(s);
   const m = META[s.section];
   // Escape backslashes then single quotes so values with apostrophes don't break the JS snippet.
   const esc = str => String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -5454,6 +5746,105 @@ function refreshCode() {
 }
 
 // Generated REST snippet for the headless AI Insights section (no Visual Embed SDK).
+// Spotter Chat (MCP) — no Visual Embed SDK. The server owns the MCP connection and the
+// bearer token; the browser only speaks to your own SSE endpoint. Two halves, both runnable.
+function spotterMcpCode(s) {
+  const esc = str => String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+  const src = s.worksheetId
+    ? `'${esc(s.worksheetId)}'`
+    : "undefined /* no data source pinned — Spotter picks one per question */";
+  // Mirror the LIVE inspector settings, so copied code reproduces this exact setup.
+  const ctx = mcpPrefs.systemContext.trim();
+  const sendArgs = ctx
+    ? `{ analytical_session_id, message: 'What drove revenue last quarter?',\n  additional_context: '${esc(ctx)}' /* System context — resent on EVERY turn */ }`
+    : "{ analytical_session_id, message: 'What drove revenue last quarter?' }";
+  const bodyLines = ['question, sessionId, tsHost // sessionId keeps the conversation going'];
+  if (ctx) bodyLines.push(`systemContext: '${esc(ctx)}', // persona → send_session_message additional_context`);
+  if (mcpPrefs.labels) bodyLines.push(`labels: ${JSON.stringify(mcpPrefs.labels)}, // vendor-term relabeling, merged over labels.json`);
+  if (!mcpPrefs.streamChunks) bodyLines.push('streamChunks: false, // whole messages instead of token chunks');
+  if (mcpPrefs.pollIntervalMs !== 600) bodyLines.push(`pollIntervalMs: ${mcpPrefs.pollIntervalMs},`);
+  const body = bodyLines.length === 1
+    ? '{ question, sessionId, tsHost } // sessionId keeps the conversation going'
+    : `{\n    ${bodyLines.join('\n    ')}\n  }`;
+  return [
+    '// ── SERVER (Node, ESM) — the MCP session flow ───────────────────────────────',
+    "// npm i @modelcontextprotocol/sdk",
+    "import { Client } from '@modelcontextprotocol/sdk/client/index.js';",
+    "import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';",
+    '',
+    '// The analytical-session tools exist ONLY on api-version=beta. api-version=2025-01-01',
+    '// connects fine but serves the older toolset (ping, createLiveboard, getAnswer, …).',
+    "const MCP_URL = 'https://agent.thoughtspot.app/token/mcp?api-version=beta';",
+    `const TS_HOST = '${esc((s.host || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, ''))}'; // bare hostname`,
+    `const DATA_SOURCE = ${src};`,
+    '',
+    'const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {',
+    '  requestInit: {',
+    '    headers: {',
+    '      Authorization: `Bearer ${token}`, // the CALLER\'S token — forwarded, never minted here',
+    "      'x-ts-host': TS_HOST,",
+    '    },',
+    '  },',
+    '});',
+    "const client = new Client({ name: 'my-app', version: '1.0.0' }, { capabilities: {} });",
+    'await client.connect(transport);',
+    '',
+    'const call = async (name, args) => {',
+    '  const res = await client.callTool({ name, arguments: args });',
+    "  const text = (res.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('');",
+    '  if (res.isError) throw new Error(`${name} failed: ${text}`);',
+    '  return text ? JSON.parse(text) : {};',
+    '};',
+    '',
+    '// 1) One analytical session per conversation — reuse its id for every follow-up.',
+    "const { analytical_session_id } = await call('create_analysis_session',",
+    '  DATA_SOURCE ? { data_source_id: DATA_SOURCE } : {});',
+    '',
+    '// 2) Send the question…',
+    `await call('send_session_message', ${sendArgs});`,
+    '',
+    '// 3) …then poll for updates until is_done. Updates are text_chunk | text | answer.',
+    'for (;;) {',
+    "  const { session_updates = [], is_done } = await call('get_session_updates', { analytical_session_id });",
+    '  for (const u of session_updates) {',
+    "    if (u.type === 'answer') console.log(u.answer_title, u.iframe_url); // render in an <iframe>",
+    "    else console.log(u.text ?? u.content);                              // stream to the client",
+    '  }',
+    '  if (is_done) break;',
+    `  await new Promise(r => setTimeout(r, ${mcpPrefs.pollIntervalMs}));`,
+    '}',
+    '',
+    '// ── BROWSER — consume your SSE relay ────────────────────────────────────────',
+    '// Your own bearer goes with every turn: trusted auth gives you one, or read the token behind',
+    '// a cookie session with GET /api/rest/2.0/auth/session/token (9.4.0.cl+). The relay never mints.',
+    "const resp = await fetch('/api/spotter-mcp/chat', {",
+    "  method: 'POST',",
+    "  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${myToken}` },",
+    `  body: JSON.stringify(${body}),`,
+    '});',
+    '',
+    'const reader = resp.body.getReader();',
+    'const decoder = new TextDecoder();',
+    "let buf = '';",
+    'for (;;) {',
+    '  const { value, done } = await reader.read();',
+    '  if (done) break;',
+    '  buf += decoder.decode(value, { stream: true });',
+    '  let i;',
+    "  while ((i = buf.indexOf('\\n\\n')) !== -1) {",
+    '    const frame = buf.slice(0, i); buf = buf.slice(i + 2);',
+    "    for (const line of frame.split('\\n')) {",
+    "      if (!line.startsWith('data:')) continue;",
+    '      const evt = JSON.parse(line.slice(5).trim());',
+    "      if (evt.type === 'session') sessionId = evt.sessionId;",
+    "      if (evt.type === 'text')    bubble.textContent += evt.text; // never innerHTML",
+    "      if (evt.type === 'answer')  frameEl.src = evt.iframe_url;",
+    '    }',
+    '  }',
+    '}',
+  ].join('\n');
+}
+
 function aiInsightsCode(s) {
   const esc = str => String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const host = esc(s.host) || 'https://your-instance.thoughtspot.cloud';
@@ -5531,6 +5922,22 @@ const FLOW_EVENT_STEP = {
 function flowSteps(section) {
   // Headless AI Insights is REST, not an iframe — show the request sequence instead of the
   // postMessage handshake. These steps are descriptive (no EmbedEvents drive them).
+  // Spotter MCP chat is an MCP session over SSE — no iframe handshake either, so narrate
+  // the tool sequence the relay actually walks.
+  if (section === 'spotter-chat') {
+    return [
+      { key: 'ask',     lane: 'host',   title: 'Ask a question', evt: 'POST /api/spotter-mcp/chat',
+        desc: 'Your chat UI posts the question; the server holds the token, the browser never sees it.' },
+      { key: 'session', lane: 'server', title: 'Open a session', evt: 'create_analysis_session',
+        desc: 'One analytical session per conversation, optionally pinned to a data source.' },
+      { key: 'send',    lane: 'server', title: 'Send the message', evt: 'send_session_message',
+        desc: 'The question goes to Spotter 3 over MCP (Streamable HTTP).' },
+      { key: 'poll',    lane: 'server', title: 'Stream updates', evt: 'get_session_updates → SSE',
+        desc: 'Polled until is_done; text_chunk / text / answer updates relay out as SSE events.' },
+      { key: 'render',  lane: 'host',   title: 'Render chat + charts', evt: 'custom DOM',
+        desc: 'Prose is relabelled by the customization layer; each answer renders its iframe_url.' },
+    ];
+  }
   if (section === 'ai-insights') {
     return [
       { key: 'pick',    lane: 'host',   title: 'Pick a data source', evt: 'Worksheet / Model GUID',
@@ -5629,6 +6036,24 @@ function flowMark(type) {
   flowActive = idx + 1 < flowCurrent.length ? idx + 1 : -1; // -1 → all done
   renderFlow();
 }
+/**
+ * Spotter MCP chat lifecycle marks. The chat has no EmbedEvents, so the panel's
+ * log lines drive the flow instead: each question restarts the sequence ("ask" is
+ * done the moment the POST goes out) and later marks pull the progress forward.
+ */
+function mcpFlowRestart() {
+  if (!flowCurrent.length) return;
+  flowReached = 0; flowActive = 1; flowFailed = -1;
+  renderFlow();
+}
+function mcpFlowMark(key) {
+  const idx = flowCurrent.findIndex(st => st.key === key);
+  if (idx < 0 || idx <= flowReached) return;
+  flowReached = idx;
+  flowActive = idx + 1 < flowCurrent.length ? idx + 1 : -1;
+  renderFlow();
+}
+
 function flowFailAt(key) {
   const idx = flowCurrent.findIndex(s => s.key === key);
   if (idx < 0) return;
@@ -5721,6 +6146,17 @@ function apiCatalog(s) {
       { method: 'POST', path: '/api/rest/2.0/ai/relevant-questions/', scope: 'TS REST', desc: 'Suggest analytical questions for the data source (Spotter; needs CAN_USE_SPOTTER).' },
       { method: 'POST', path: '/api/rest/2.0/ai/answer/create', scope: 'TS REST', desc: 'Generate a single AI answer (search tokens + viz type) for a natural-language query.' },
       { method: 'POST', path: '/api/rest/2.0/searchdata', scope: 'TS REST', desc: "Run the answer's tokens against the data source to fetch the actual rows shown inline." },
+    ] });
+    return groups;
+  }
+
+  // Spotter MCP chat talks to the MCP server through the local relay — no TS REST calls of its own.
+  if (s.section === 'spotter-chat') {
+    groups.push({ group: 'Spotter MCP (relay)', items: [
+      { method: 'POST', path: '/api/spotter-mcp/chat', scope: 'playground', desc: 'Relay one question to the Spotter 3 MCP server; streams session/text/answer events back as SSE.' },
+      { method: 'POST', path: '/api/spotter-mcp/dashboard', scope: 'playground', desc: 'Pin the session\'s answers into a new Liveboard via the create_dashboard tool (outside the analysis session).' },
+      { method: 'GET', path: '/api/spotter-mcp/health', scope: 'playground', desc: 'MCP connectivity check — returns the live tool list and the active label map.' },
+      { method: 'GET', path: '/api/rest/2.0/auth/session/token', scope: 'TS REST', desc: 'Read the bearer behind YOUR session so the relay can forward it (browser-session auth only; it never mints).' },
     ] });
     return groups;
   }
