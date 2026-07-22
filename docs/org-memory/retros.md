@@ -48,3 +48,29 @@ This log is the raw material for org retrospectives (BACKLOG M2).
   that the repo state didn't match the brief. Delegated research also caught that the org-memory line
   cites were ~1200 lines stale. Lesson: gates prove a fix works; only adversarial review proves it
   doesn't break something else.
+- 2026-07-22 (M9/M10, the org fixing its own process): the two process failures the S13 cycle filed
+  were fixed — but the fix itself needed **four review rounds**, and every round found the new
+  doctrine re-committing the failure it was written to prevent. Round 1: QA FAILED by *executing* the
+  shell recipe the PR shipped (cleanup exited 128), and all three lenses independently found the
+  recipe relied on cwd/`$VARS` surviving between agent Bash calls — they don't, and `cd "$UNSET"`
+  returns 0, so QA's mutation test would have landed in the shared checkout: M10 re-opened by M10's
+  own fix. Round 2: the recipe ordered cleanup BEFORE the mutation test, leaving the single most
+  dangerous command in the bar with no worktree to run in. Round 3: the governance lens traced a
+  production-deploy exploit through the new carve-out's deny-list (`package.json` re-points what
+  `npm test` runs; `guard` protects `scripts/smoke-test.mjs` but not the script name invoking it).
+  Round 4: the reconciliation check the PR added used `git log --oneline`, which cannot decide a
+  file-list predicate — decorative. **Lesson: a rule about a mechanism must be executed, not just
+  read.** QA's insistence on running the shipped recipe verbatim, in the real multi-call agent shape,
+  is what caught rounds 1 and 2; no amount of careful reading had. The corresponding lesson for
+  authors: prose describing a shell workflow is code, and untested code.
+- 2026-07-22 (M9/M10): the cycle dogfooded its own output — the implementer committed to its branch
+  every round (M9), and reviewers were handed SHAs while QA mutated a worktree (M10). That is why the
+  parallel Review Board ∥ QA phase was safe this time, and QA proved it: during the live mutation the
+  scratch worktree showed `M js/app.js` while the shared checkout stayed empty. Adversarial review
+  earned its keep at a ratio nothing else matches — 21 confirmed findings across 4 rounds on a
+  docs-only diff, of which 4 were exploitable holes in the org's own safety machinery.
+- 2026-07-22 (M9/M10, process friction worth naming): the playbook says "one item per cycle unless
+  explicitly batching" but M9 and M10 were inseparable — M10's "review this SHA" is unimplementable
+  unless M9 guarantees a SHA exists. Batching was right and cost nothing. The real friction was
+  convergence: four fix rounds on a docs-only diff is expensive, and three of the four were caused by
+  the same author-side blind spot (writing shell prose without running it). Filed S21, M11, M12, M13.

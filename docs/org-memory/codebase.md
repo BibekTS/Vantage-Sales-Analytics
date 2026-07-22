@@ -164,6 +164,45 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
 - 2026-07-22 (S13): probes share ONE default browser context (localStorage is common to all) and run
   in declaration order against a hard 120s whole-run watchdog that is not scaled per probe. A probe
   that writes state must be ordered after any probe that asserts on persistence. Filed as **S20**.
+- 2026-07-22 (M9/M10, EMPIRICALLY VERIFIED, the most load-bearing fact here): **agent-thread Bash
+  calls reset cwd and lose shell variables between invocations.** `cd /var/tmp` in one call → `pwd`
+  in the next returns the repo root. Worse, `cd "$UNSET_VAR"` is `cd ""`, which **returns 0 in zsh**
+  and leaves you in the shared checkout — so any multi-call recipe built on a bare `cd` fails **open**,
+  silently, into the very tree it was meant to protect. Every recipe handed to an agent must echo its
+  absolute paths, use one self-contained chain per call (`cd /abs/path && …`), and use `git -C <abs>`
+  for anything cwd-sensitive. This defect was written into the M10 recipe twice before review caught it.
+- 2026-07-22 (M9/M10): the **QA scratch-worktree recipe** is mechanically sound and empirically proven:
+  `git worktree add --detach <tmp> <SHA>` (creates missing leaf dirs) + `ln -s "$ROOT/node_modules"`
+  is sufficient — `express`/`dotenv`/`puppeteer-core` all resolve, and `vendor/`+`.env` are unneeded
+  because the SDK is CDN-imported (`js/embed.js`) and both gate scripts force a clean env. Both scripts
+  derive `ROOT` from `import.meta.url` and spawn `server.js` with `cwd: ROOT`, so the scratch copy gates
+  itself. Cleanup MUST be `git -C <root> worktree remove --force <scratch> && git -C <root> worktree
+  prune`: the bare form run from inside the worktree exits **128** (`remove` succeeds, then `prune`
+  can't `getcwd()`). `worktree remove` does NOT follow the `node_modules` symlink (canary-tested,
+  122 entries before and after). It isolates **files, not ports** — 34917/34921 stay serialized (M8).
+- 2026-07-22 (M9/M10): the isolation property was proven, not assumed — during a live mutation the
+  scratch worktree showed `M js/app.js` while `git status --porcelain` on the shared checkout was
+  EMPTY, and the S13 probe flipped to FAIL under the mutation (teeth confirmed). Caveats: the scratch
+  worktree shares `ROOT/.git`, so ref-writing commands (`git stash`/`branch`/`tag`/`reset`) escape the
+  "removing the worktree discards every mutation" property — inside it run only
+  `git checkout <base> -- <path>`. `node_modules` shows as `?? node_modules` there (`.gitignore` has
+  `node_modules/` with a trailing slash, which doesn't match a symlink), so `--force` on removal is
+  load-bearing, not decorative, and a scratch tree's `git status` is never empty.
+- 2026-07-22 (M9/M10): `git merge-base --is-ancestor A B` exits **0** when A is an ancestor of B *or
+  equals B*, **1** when not, **128** when either ref doesn't resolve — three outcomes. It proves
+  membership, NOT tip-ness: a stale-but-on-branch SHA still exits 0. Staleness detection needs the
+  companion `git rev-parse <branch>` plus "state both and say if they differ". Never cite the ancestor
+  check alone as the staleness guard.
+- 2026-07-22 (M9/M10): `git log --oneline A..HEAD` can NEVER establish a "records-only" claim — it
+  prints the subject the committing agent chose, not a file list. Any governance check on a commit's
+  *file set* must use `--name-only`/`--stat` (or `git diff --name-only A..HEAD | sort -u`, which is
+  flatter and also covers the merge-commit case). Found re-opening the carve-out at step 7.
+- 2026-07-22 (M9/M10): `$PIPESTATUS` does not work under this repo's zsh Bash-tool shell —
+  `npm test 2>&1 | tail` yields an empty exit code. Capture gate exit codes by redirecting to a file
+  and reading `$?` directly, never through a pipe.
+- 2026-07-22 (M9/M10): the CI `guard` job's `case` pattern (`.github/workflows/ci.yml`) can be replayed
+  verbatim in a local shell against `git diff --name-only origin/main...<sha>` — it predicts the guard
+  check exactly and costs nothing, so QA can report guard status before CI ever runs.
 - 2026-07-22 (S13): `window.__onCustomAction` is a plain `window` global, dispatchable directly from a
   probe with a synthetic `{id, data:{clickedPoint:{selectedAttributes:[{column:{name},value}]}}}`
   payload — a host-free `#s=` link plus a direct call exercises registry-rebuild → `extractRow` →
@@ -203,3 +242,41 @@ entries when falsified; promote to `CLAUDE.md` when they harden into rules.
 
 - 2026-07-10 (W2): the ts-watch detector reports SDK versions 1.49.1–1.50.0 newer than the pinned
   1.49.0. Bump procedure is in `docs/ts-watch-playbook.md`; W2 is the open item.
+
+## Governance / how the rulebook itself fails
+
+- 2026-07-22 (M9/M10): **rules that partition the repo must be written as a closed ALLOW-list; an
+  enumerated deny-list of "product paths" fails open.** The post-QA re-verification carve-out was
+  first written as an allow-list (`BACKLOG.md`, `docs/org-memory/*`) PLUS a deny-list (`js/`,
+  `server.js`, `lib/`, `scripts/`, `*.html`, `*.css`) — which together do not cover the repo.
+  `package.json`, `config.js`, `package-lock.json`, `ts-sdk-version.json`, `vendor/**`, and
+  `.claude/**` (the org's own machinery) fell in the gap and read as non-invalidating. Traced
+  exploit: a post-QA commit editing only `package.json` re-points what `npm test` runs, `guard`
+  stays green (it protects `scripts/smoke-test.mjs`, not the script name that invokes it), CI's
+  `smoke` job runs the weakened command, all three auto-merge conjuncts hold → production deploy of
+  an unverified artifact. Shipped form: "touches **nothing except** those two entries… **there is no
+  third category**". Note the guard job's protected-path list and the "is this product code" list are
+  **different sets and neither is a superset of the other** — M11 tracks the mechanical gap.
+- 2026-07-22 (M9/M10): **"not guard-protected" is not a licence.** Guard-protection and records-only
+  are orthogonal axes; conflating them is this rulebook's recurring defect. It appeared twice (the
+  step-8 micro-retro's "fix it in this same PR when trivial (those files are not guard-protected)"
+  and the step-6 machinery sentence), each time letting an unreviewed post-QA edit to `.claude/*` —
+  including the definition of the gate agent itself — ride onto an already-verified PR.
+- 2026-07-22 (M9/M10): **`Never X. Exception — Y.` grammatically attaches the carve-out to the
+  prohibition**, even when Y is about something else entirely. Caught in `qa-verifier.md` (where the
+  scratch-mutation exception scoped over "never weaken a test"), fixed, then immediately RE-CREATED in
+  `implementer.md` in the next round. Landed remedy pattern: exceptions as sub-bullets explicitly
+  labelled as narrowing *the obligation*, then the prohibition in its own paragraph headed "Standing
+  on its own, narrowed by neither of the above… admits **no** exception, in any tree".
+  `grep -rn "Exception —" .claude/ docs/bootstrap-org-prompt.md` returning no hits is a cheap standing
+  structural check whenever the org's prose changes.
+- 2026-07-22 (M9/M10): the single amend boundary across the org's docs is **QA dispatch** — amending
+  after QA orphans the verified SHA, so the PR's cited evidence becomes unresolvable (`fatal: bad
+  object`), not merely stale. The implementer never pushes, so a QA-verified SHA is remote-unreachable
+  until Operations pushes *that commit itself*. The org merges with `--squash`, so the verified SHA is
+  never on `main` — post-merge reconciliation goes via `refs/pull/N/head` or tree equality (M13).
+- 2026-07-22 (M9/M10): duplicated snippets across `.claude/*` files need a drift tripwire — the QA
+  recipe is intentionally byte-identical in `SKILL.md` and `qa-verifier.md` (sha1
+  `ba27a041aaf037086be5c0f17b215494bb6ca4dc` at f927b9c). But byte-identity is wrong for any line
+  carrying a cross-reference: `# see step 3's commit rule` pointed into SKILL.md while `qa-verifier.md`
+  has its own step 3 (`npm run boot-check`) — a reader of the agent file alone resolves it wrongly.
