@@ -510,6 +510,10 @@ async function connect({ silent = false } = {}) {
     if (isCors) {
       // CORS: REST is blocked but the embed iframe still works — show the error overlay with
       // "Proceed anyway" so the user can still render without fixing CORS first.
+      const titleEl = $('#error-title');
+      if (titleEl) titleEl.textContent = 'Could not render';
+      const proceedBtn = $('#state-overlay .st-error [data-act="proceed"]');
+      if (proceedBtn) proceedBtn.hidden = false;
       $('#error-sub').textContent = `CORS blocked — add ${location.origin} to ThoughtSpot’s CORS allowlist (Develop → Customizations → Security Settings). Click "Proceed anyway" to render the embed via the iframe.`;
       setOverlay('error');
     } else {
@@ -735,8 +739,7 @@ function render() {
       // Auth failures (bad/expired token, blocked cookies) → the styled not-logged-in overlay,
       // latched so a trailing Load event for TS's own "Not logged in" page can't clear it.
       if (str === '__NO_COOKIE__' || str === '__AUTH_FAILURE__') { authFailed = true; setOverlay('not-logged-in'); return; }
-      $('#error-sub').textContent = str;
-      setOverlay('error');
+      showRenderError(str);
     },
     onEvent: logEvent,
   }, {
@@ -835,6 +838,39 @@ function setOverlay(state) {
     if (claimsBtn) claimsBtn.hidden = !isTrusted;
     if (retryBtn) retryBtn.classList.toggle('st-btn-ghost', isTrusted);
   }
+}
+
+// Route every SDK render failure through here so the "Could not render" overlay can adapt its copy
+// and actions to *why* it failed. The one case worth special-casing: a cross-org access error.
+// After the user switches orgs in the ThoughtSpot cluster, a shared link (or a stale picker) can
+// still point at a Liveboard/Answer that only exists on the previous org. ThoughtSpot then returns
+// "User has to switch orgs to request or access <TYPE> with id <id>". Dumping that raw string is
+// unhelpful and "Proceed anyway" can't fix it — the object genuinely isn't reachable on this org.
+// So swap in the two concrete ways out: switch back to the org that owns it, or pick a different
+// object that lives on the current org.
+function showRenderError(str) {
+  const titleEl = $('#error-title');
+  const subEl = $('#error-sub');
+  const proceedBtn = $('#state-overlay .st-error [data-act="proceed"]');
+  const crossOrg = /switch org/i.test(str);
+  if (crossOrg) {
+    // Name the object type from the SDK message (PINBOARD_ANSWER_BOOK = Liveboard, QUESTION_ANSWER_BOOK
+    // = saved Answer) so the guidance matches what the user was trying to render.
+    const noun = /QUESTION_ANSWER_BOOK/i.test(str) ? 'saved Answer'
+      : /PINBOARD/i.test(str) ? 'Liveboard'
+      : 'object';
+    if (titleEl) titleEl.textContent = `This ${noun} lives on a different org`;
+    subEl.textContent = `Your session switched orgs. This ${noun} exists on a different org than the `
+      + `one you're connected to now, so it can't be rendered here. Either switch back to the org in `
+      + `ThoughtSpot where it was created and click Retry, or pick a different ${noun} that exists on `
+      + `this org from the Data panel on the right.`;
+    if (proceedBtn) proceedBtn.hidden = true; // "Proceed anyway" can't reach a cross-org object
+  } else {
+    if (titleEl) titleEl.textContent = 'Could not render';
+    subEl.textContent = str;
+    if (proceedBtn) proceedBtn.hidden = false;
+  }
+  setOverlay('error');
 }
 
 function bindStateOverlay() {
@@ -2118,6 +2154,25 @@ function renderMcpInspector(s, body) {
   });
   relay.append(check, relayOut);
   body.appendChild(accordion('Relay', '/api/spotter-mcp/health', relay));
+
+  // ── Docs (read-only) ─────────────────────────────────────────────────────────
+  // Pointers out to ThoughtSpot's own Spotter 3 MCP references, so the page links to
+  // the source of truth rather than restating it. http(s)-guarded like every external
+  // href here.
+  const docs = el('div', 'sec-body');
+  docs.appendChild(el('div', 'sec-note', 'ThoughtSpot’s own references for the Spotter 3 MCP server and a sample agent.'));
+  [
+    ['Spotter 3 MCP tool reference', 'https://developers.thoughtspot.com/docs/mcp-tool-reference-spotter3'],
+    ['Sample: Python + React agent UI', 'https://github.com/thoughtspot/developer-examples/blob/main/mcp/python-react-agent-simple-ui/README.md'],
+  ].forEach(([label, url]) => {
+    const href = safeNavUrl(url);
+    if (!href) return;
+    const a = el('a', 'sty-tb-link');
+    a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.innerHTML = `<span>${label}</span><span class="sty-tb-arrow">↗</span>`;
+    docs.appendChild(a);
+  });
+  body.appendChild(accordion('Docs', 'developers.thoughtspot.com', docs));
 
   $('#insp-reset').onclick = () => { destroySpotterMcp(); renderInspector(); render(); };
 }
@@ -5178,7 +5233,7 @@ function enterDrill(drillId, filters) {
   authFailed = false;
   currentEmbed = doRender('liveboard', cfg, {
     onDone() { if (authFailed) return; clearTimeout(fallback); setOverlay('hidden'); },
-    onError(msg) { clearTimeout(fallback); const str = typeof msg === 'string' ? msg : JSON.stringify(msg); if (str === '__NO_COOKIE__' || str === '__AUTH_FAILURE__') { authFailed = true; setOverlay('not-logged-in'); return; } $('#error-sub').textContent = str; setOverlay('error'); },
+    onError(msg) { clearTimeout(fallback); const str = typeof msg === 'string' ? msg : JSON.stringify(msg); if (str === '__NO_COOKIE__' || str === '__AUTH_FAILURE__') { authFailed = true; setOverlay('not-logged-in'); return; } showRenderError(str); },
     onEvent: logEvent,
   }, {
     hiddenActions: getState().hiddenActions.map(k => Action[k]).filter(Boolean),
