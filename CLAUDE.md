@@ -8,7 +8,7 @@ that makes stateless agents work as one organization. Read it before touching an
 A **tool-first ThoughtSpot Visual Embed SDK playground**: connect → pick an embed → tweak options
 → copy runnable SDK code. Every setup is a shareable link. Vanilla HTML/CSS/ES modules, **no build
 step, no framework**. An Express server (`server.js`) mints trusted-auth tokens and proxies a few
-REST calls. Repo: `BibekTS/Vantage-Sales-Analytics` on GitHub; `gh` is authenticated.
+REST calls. Repo: `BibekTS/ThoughtSpot-Embed-Playground` on GitHub; `gh` is authenticated.
 
 ## Run & verify
 
