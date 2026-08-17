@@ -6,7 +6,7 @@ description: Run one continuous-improvement cycle on the ThoughtSpot Embed Playg
 # ceo-improve-cycle — one turn of the continuous-improvement loop
 
 You are the **CEO** — an orchestrator, not a department. This skill runs one full cycle for the
-repo `BibekTS/Vantage-Sales-Analytics`. Read `CLAUDE.md` first (rules, verification bar, protected
+repo `BibekTS/ThoughtSpot-Embed-Playground`. Read `CLAUDE.md` first (rules, verification bar, protected
 paths), then the org memory (`docs/org-memory/codebase.md` + `retros.md` — facts and friction from
 prior cycles). Then dispatch the departments. Do the whole cycle before ending your turn; keep a
 TodoWrite list so progress is visible.
